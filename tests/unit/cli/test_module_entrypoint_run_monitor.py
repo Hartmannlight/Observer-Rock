@@ -71,7 +71,16 @@ def test_module_entrypoint_executes_monitor_with_real_workspace_files(
 
     assert exc_info.value.code == 0
     assert captured.err == ""
-    assert captured.out == f"monitor-123 COMPLETED {workspace / '.observer_rock' / 'artifacts'}\n"
+    assert "workspace status=LOADED" in captured.out
+    assert "run status=STARTED monitor=monitor-123" in captured.out
+    assert "source status=COMPLETED document=monitor-123-source-data@v1" in captured.out
+    assert "analysis status=COMPLETED document=monitor-123-analysis-output@v1" in captured.out
+    assert "notifications status=SKIPPED reason=no_outputs" in captured.out
+    assert "run status=COMPLETED monitor=monitor-123" in captured.out
+    assert (
+        "monitor-123 COMPLETED source=monitor-123-source-data@v1 "
+        "analysis=monitor-123-analysis-output@v1 notifications=none"
+    ) in captured.out
     assert (
         artifact.read_text(encoding="utf-8") == '{"monitor_id":"monitor-123","outputs":'
         '[{"profile_name":"summary_v2","plugin":"workspace_analysis","output":'

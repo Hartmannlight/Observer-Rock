@@ -31,20 +31,32 @@ coherent delivery packages, not by framework-only micro-steps.
 
 ### Package 3: Operator Usability
 
-Next:
+Implemented in the current tree:
 
-- tighten CLI output
+- tighten CLI output for monitor and scheduler runs
+- add workspace inspection via `list-monitors`
+- add workspace preflight via `validate-workspace`
+- add workspace scaffolding via `init-workspace`
 - add example setup docs
+- add root-level operator docs
 - document failure modes and secrets
+
+Open decision:
+
+- decide whether artifact inspection belongs in Package 3 or moves fully to Package 4
+- decide whether D3 is complete enough to close once D4 artifact inspection lands
 
 ### Package 4: Hardening
 
-Only after Package 2 is real:
+In progress:
 
-- logging improvements
-- retry boundaries
-- better scheduler ergonomics
+- runtime observability for monitor and scheduler execution
+- retry boundaries for analysis and notification stages
+
+Next within Package 4:
+
 - artifact inspection helpers
+- final scheduler ergonomics once retry behavior is in place
 
 ## Working Mode
 

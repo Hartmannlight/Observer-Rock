@@ -69,8 +69,13 @@ def test_run_scheduler_executes_the_configured_monitor_once(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "monitor-123" in captured.out
-    assert "COMPLETED" in captured.out
+    assert "scheduler status=STARTED" in captured.out
+    assert "tick=2026-03-14T12:05:00+00:00" in captured.out
+    assert "run status=STARTED monitor=monitor-123" in captured.out
+    assert "source status=COMPLETED document=monitor-123-source-data@v1" in captured.out
+    assert "analysis status=COMPLETED document=monitor-123-analysis-output@v1" in captured.out
+    assert "run status=COMPLETED monitor=monitor-123" in captured.out
+    assert "Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=1 due=1 skipped=0 completed=1 failed=0" in captured.out
     assert captured.err == ""
     assert source_plugin.calls == ["monitor-123"]
     assert analysis_plugin.calls == [("monitor-123", "summary_v2")]
@@ -162,8 +167,14 @@ def test_run_scheduler_suppresses_success_output_when_any_monitor_runtime_fails(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.out == ""
-    assert captured.err == "monitor-failure FAILED: analysis exploded\n"
+    assert "scheduler status=STARTED" in captured.out
+    assert "run status=COMPLETED monitor=monitor-success" in captured.out
+    assert "analysis status=FAILED target=summary_v2 attempts=1 error=analysis exploded" in captured.out
+    assert "Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=2 due=2 skipped=0 completed=1 failed=1" in captured.out
+    assert captured.err == (
+        "monitor-failure FAILED stage=analysis "
+        "target=summary_v2 attempts=1: analysis exploded\n"
+    )
     assert source_plugin.calls == ["monitor-success", "monitor-failure"]
     assert analysis_plugin.calls == [
         ("monitor-success", "summary_v2"),
@@ -226,7 +237,15 @@ def test_run_scheduler_skips_monitor_when_schedule_is_not_due_for_current_tick(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert captured.out == ""
+    assert (
+        captured.out
+        == "scheduler status=STARTED "
+        f"workspace={workspace} "
+        "tick=2026-03-14T12:05:00+00:00 "
+        "services=1 analysis_profiles=1 configured=1 due=0 skipped=1\n"
+        "No monitors due at 2026-03-14T12:05:00+00:00 (1 configured)\n"
+        "Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=1 due=0 skipped=1 completed=0 failed=0\n"
+    )
     assert captured.err == ""
     assert source_plugin.calls == []
     assert analysis_plugin.calls == []
@@ -287,7 +306,15 @@ def test_run_scheduler_skips_step_interval_monitor_on_non_matching_tick(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert captured.out == ""
+    assert (
+        captured.out
+        == "scheduler status=STARTED "
+        f"workspace={workspace} "
+        "tick=2026-03-14T12:06:00+00:00 "
+        "services=1 analysis_profiles=1 configured=1 due=0 skipped=1\n"
+        "No monitors due at 2026-03-14T12:06:00+00:00 (1 configured)\n"
+        "Scheduler summary tick=2026-03-14T12:06:00+00:00 configured=1 due=0 skipped=1 completed=0 failed=0\n"
+    )
     assert captured.err == ""
     assert source_plugin.calls == []
     assert analysis_plugin.calls == []

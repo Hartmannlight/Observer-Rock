@@ -15,12 +15,12 @@ This backlog now tracks delivery packages instead of micro-invariants.
 ## Next
 
 - `D3` Improve operator usability
-  - Status: next
-  - Scope: better CLI output, clearer example config, setup notes, failure-path docs
+  - Status: implementation mostly done; closure pending
+  - Scope: better CLI output, `list-monitors`, `validate-workspace`, `init-workspace`, clearer example config, setup notes, failure-path docs
 
 - `D4` Production-hardening for the first slice
-  - Status: queued
-  - Scope: logging, retry boundaries, better scheduler ergonomics, artifact inspection helpers
+  - Status: in progress
+  - Scope: runtime observability, retry boundaries, better scheduler ergonomics, artifact inspection helpers
 
 ## Later
 

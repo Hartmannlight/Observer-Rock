@@ -124,6 +124,28 @@ class PersistedMonitorSourceToAnalysisArtifacts:
     source: PersistedMonitorArtifact
     analysis: PersistedMonitorArtifact
     notifications: PersistedMonitorArtifact | None = None
+    source_attempts: int = 1
+    analysis_attempts: tuple[tuple[str, int], ...] = ()
+    notification_attempts: tuple[tuple[str, int], ...] = ()
+
+
+class MonitorExecutionStageError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: str,
+        message: str,
+        attempts: int = 1,
+        target: str | None = None,
+        source_artifact: PersistedMonitorArtifact | None = None,
+        analysis_artifact: PersistedMonitorArtifact | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.attempts = attempts
+        self.target = target
+        self.source_artifact = source_artifact
+        self.analysis_artifact = analysis_artifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +267,7 @@ class MonitorExecutionService:
     ) -> MonitorExecutionResult[MonitorAnalysis]:
         return self.execute_monitor(
             monitor_id=monitor_id,
-            operation=self._build_monitor_analysis,
+            operation=lambda monitor: self._build_monitor_analysis(monitor)[0],
         )
 
     def execute_monitor_source(
@@ -455,7 +477,7 @@ class MonitorExecutionService:
         monitor: MonitorConfig,
         *,
         source_data: MonitorSourceData | None = None,
-    ) -> MonitorAnalysis:
+    ) -> tuple[MonitorAnalysis, tuple[tuple[str, int], ...]]:
         configured_profiles = (
             self.workspace.analysis_profiles.analysis_profiles
             if self.workspace.analysis_profiles is not None
@@ -464,8 +486,8 @@ class MonitorExecutionService:
         source_data = (
             self._build_monitor_source_data(monitor) if source_data is None else source_data
         )
-        outputs = tuple(
-            self._build_monitor_analysis_output_entry(
+        output_entries = tuple(
+            self._build_monitor_analysis_output_entry_with_attempts(
                 monitor=monitor,
                 profile_name=analysis.profile,
                 profile=configured_profiles[analysis.profile],
@@ -473,7 +495,13 @@ class MonitorExecutionService:
             )
             for analysis in (monitor.analyses or [])
         )
-        return MonitorAnalysis(monitor_id=monitor.id, outputs=outputs)
+        return (
+            MonitorAnalysis(
+                monitor_id=monitor.id,
+                outputs=tuple(entry.output for entry in output_entries),
+            ),
+            tuple((entry.profile_name, entry.attempts) for entry in output_entries),
+        )
 
     def _build_monitor_notifications(
         self,
@@ -481,9 +509,9 @@ class MonitorExecutionService:
         *,
         analysis: MonitorAnalysis,
         source_data: MonitorSourceData | None = None,
-    ) -> MonitorNotifications | None:
+    ) -> tuple[MonitorNotifications | None, tuple[tuple[str, int], ...]]:
         if not monitor.outputs:
-            return None
+            return None, ()
         if self.plugin_registry is None:
             raise ValueError(
                 "MonitorExecutionService requires a plugin_registry for output delivery"
@@ -492,8 +520,8 @@ class MonitorExecutionService:
         analysis_outputs = {
             output_entry.profile_name: output_entry for output_entry in analysis.outputs
         }
-        deliveries = tuple(
-            self._build_monitor_notification_delivery(
+        delivery_entries = tuple(
+            self._build_monitor_notification_delivery_with_attempts(
                 monitor=monitor,
                 output=output,
                 analysis_output=analysis_outputs[output.profile],
@@ -501,7 +529,13 @@ class MonitorExecutionService:
             )
             for output in monitor.outputs
         )
-        return MonitorNotifications(monitor_id=monitor.id, deliveries=deliveries)
+        return (
+            MonitorNotifications(
+                monitor_id=monitor.id,
+                deliveries=tuple(entry.delivery for entry in delivery_entries),
+            ),
+            tuple((entry.target, entry.attempts) for entry in delivery_entries),
+        )
 
     def _build_monitor_source_data(self, monitor: MonitorConfig) -> MonitorSourceData:
         if self.plugin_registry is None:
@@ -618,7 +652,7 @@ class MonitorExecutionService:
         artifact_store: ArtifactStore,
         source_data: MonitorSourceData | None = None,
     ) -> PersistedMonitorArtifact:
-        analysis = self._build_monitor_analysis(monitor, source_data=source_data)
+        analysis, _ = self._build_monitor_analysis(monitor, source_data=source_data)
         return self._persist_built_monitor_analysis_artifact(
             monitor=monitor,
             analysis=analysis,
@@ -704,25 +738,76 @@ class MonitorExecutionService:
         document_repository: DocumentRepository,
         artifact_store: ArtifactStore,
     ) -> PersistedMonitorSourceToAnalysisArtifacts:
-        persisted_source = self._persist_monitor_source_data_artifact(
-            monitor=monitor,
-            document_repository=document_repository,
-            artifact_store=artifact_store,
-        )
-        built_analysis = self._build_monitor_analysis(monitor, source_data=persisted_source.source)
-        analysis_artifact = self._persist_built_monitor_analysis_artifact(
-            monitor=monitor,
-            analysis=built_analysis,
-            document_repository=document_repository,
-            artifact_store=artifact_store,
-        )
-        persisted_notifications = self._persist_monitor_notifications_artifact(
-            monitor=monitor,
-            document_repository=document_repository,
-            artifact_store=artifact_store,
-            analysis=built_analysis,
-            source_data=persisted_source.source,
-        )
+        try:
+            persisted_source = self._persist_monitor_source_data_artifact(
+                monitor=monitor,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+            )
+        except Exception as exc:
+            raise MonitorExecutionStageError(stage="source", message=str(exc)) from exc
+        try:
+            built_analysis, analysis_attempts = self._build_monitor_analysis(
+                monitor,
+                source_data=persisted_source.source,
+            )
+            analysis_artifact = self._persist_built_monitor_analysis_artifact(
+                monitor=monitor,
+                analysis=built_analysis,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+            )
+        except Exception as exc:
+            if isinstance(exc, MonitorExecutionStageError):
+                raise MonitorExecutionStageError(
+                    stage=exc.stage,
+                    message=str(exc),
+                    attempts=exc.attempts,
+                    target=exc.target,
+                    source_artifact=PersistedMonitorArtifact(
+                        document=persisted_source.document,
+                        artifact=persisted_source.artifact,
+                    ),
+                    analysis_artifact=exc.analysis_artifact,
+                ) from exc
+            raise MonitorExecutionStageError(
+                stage="analysis",
+                message=str(exc),
+                source_artifact=PersistedMonitorArtifact(
+                    document=persisted_source.document,
+                    artifact=persisted_source.artifact,
+                ),
+            ) from exc
+        try:
+            persisted_notifications, notification_attempts = self._persist_monitor_notifications_artifact(
+                monitor=monitor,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+                analysis=built_analysis,
+                source_data=persisted_source.source,
+            )
+        except Exception as exc:
+            if isinstance(exc, MonitorExecutionStageError):
+                raise MonitorExecutionStageError(
+                    stage=exc.stage,
+                    message=str(exc),
+                    attempts=exc.attempts,
+                    target=exc.target,
+                    source_artifact=PersistedMonitorArtifact(
+                        document=persisted_source.document,
+                        artifact=persisted_source.artifact,
+                    ),
+                    analysis_artifact=analysis_artifact,
+                ) from exc
+            raise MonitorExecutionStageError(
+                stage="notifications",
+                message=str(exc),
+                source_artifact=PersistedMonitorArtifact(
+                    document=persisted_source.document,
+                    artifact=persisted_source.artifact,
+                ),
+                analysis_artifact=analysis_artifact,
+            ) from exc
         return PersistedMonitorSourceToAnalysisArtifacts(
             source=PersistedMonitorArtifact(
                 document=persisted_source.document,
@@ -730,6 +815,9 @@ class MonitorExecutionService:
             ),
             analysis=analysis_artifact,
             notifications=persisted_notifications,
+            source_attempts=1,
+            analysis_attempts=analysis_attempts,
+            notification_attempts=notification_attempts,
         )
 
     def _persist_monitor_definition_artifact(
@@ -779,22 +867,61 @@ class MonitorExecutionService:
         profile: AnalysisProfileConfig,
         source_data: MonitorSourceData | None = None,
     ) -> MonitorAnalysisOutputEntry:
+        return self._build_monitor_analysis_output_entry_with_attempts(
+            monitor=monitor,
+            profile_name=profile_name,
+            profile=profile,
+            source_data=source_data,
+        ).output
+
+    @dataclass(frozen=True, slots=True)
+    class _RetriedAnalysisOutputEntry:
+        profile_name: str
+        output: MonitorAnalysisOutputEntry
+        attempts: int
+
+    def _build_monitor_analysis_output_entry_with_attempts(
+        self,
+        *,
+        monitor: MonitorConfig,
+        profile_name: str,
+        profile: AnalysisProfileConfig,
+        source_data: MonitorSourceData | None = None,
+    ) -> _RetriedAnalysisOutputEntry:
         if self.plugin_registry is None:
             raise ValueError(
                 "MonitorExecutionService requires a plugin_registry for analysis execution"
             )
 
         plugin = self.plugin_registry.resolve_analysis_plugin(profile.plugin)
-        return MonitorAnalysisOutputEntry(
-            profile_name=profile_name,
-            plugin=profile.plugin,
-            output=plugin.analyze(
-                monitor=monitor,
-                profile_name=profile_name,
-                profile=profile,
-                source_data=source_data,
-            ),
-        )
+        attempts = 0
+        max_attempts = 1 + (profile.retries or 0)
+        last_error: Exception | None = None
+        for _ in range(max_attempts):
+            attempts += 1
+            try:
+                return self._RetriedAnalysisOutputEntry(
+                    profile_name=profile_name,
+                    output=MonitorAnalysisOutputEntry(
+                        profile_name=profile_name,
+                        plugin=profile.plugin,
+                        output=plugin.analyze(
+                            monitor=monitor,
+                            profile_name=profile_name,
+                            profile=profile,
+                            source_data=source_data,
+                        ),
+                    ),
+                    attempts=attempts,
+                )
+            except Exception as exc:
+                last_error = exc
+        raise MonitorExecutionStageError(
+            stage="analysis",
+            message=str(last_error) if last_error is not None else "analysis failed",
+            attempts=attempts,
+            target=profile_name,
+        ) from last_error
 
     def _build_monitor_notification_delivery(
         self,
@@ -804,6 +931,27 @@ class MonitorExecutionService:
         analysis_output: MonitorAnalysisOutputEntry,
         source_data: MonitorSourceData | None = None,
     ) -> MonitorNotificationDelivery:
+        return self._build_monitor_notification_delivery_with_attempts(
+            monitor=monitor,
+            output=output,
+            analysis_output=analysis_output,
+            source_data=source_data,
+        ).delivery
+
+    @dataclass(frozen=True, slots=True)
+    class _RetriedNotificationDelivery:
+        target: str
+        delivery: MonitorNotificationDelivery
+        attempts: int
+
+    def _build_monitor_notification_delivery_with_attempts(
+        self,
+        *,
+        monitor: MonitorConfig,
+        output: MonitorOutputConfig,
+        analysis_output: MonitorAnalysisOutputEntry,
+        source_data: MonitorSourceData | None = None,
+    ) -> _RetriedNotificationDelivery:
         if self.plugin_registry is None:
             raise ValueError(
                 "MonitorExecutionService requires a plugin_registry for output delivery"
@@ -811,25 +959,44 @@ class MonitorExecutionService:
 
         service = self.workspace.services.services[output.service]
         renderer = self.plugin_registry.resolve_renderer_plugin(output.renderer)
-        payload = renderer.render(
-            monitor=monitor,
-            output=output,
-            analysis_output=analysis_output,
-            source_data=source_data,
-        )
         notifier = self.plugin_registry.resolve_notifier_plugin(service.plugin)
-        notifier.notify(
-            monitor=monitor,
-            service_name=output.service,
-            service=service,
-            payload=payload,
-        )
-        return MonitorNotificationDelivery(
-            profile_name=output.profile,
-            renderer=output.renderer,
-            service_name=output.service,
-            notifier_plugin=service.plugin,
-            payload=payload,
+        attempts = 0
+        max_attempts = 1 + (service.retries or 0)
+        last_error: Exception | None = None
+        target = f"{output.profile}->{output.service}"
+        for _ in range(max_attempts):
+            attempts += 1
+            try:
+                payload = renderer.render(
+                    monitor=monitor,
+                    output=output,
+                    analysis_output=analysis_output,
+                    source_data=source_data,
+                )
+                notifier.notify(
+                    monitor=monitor,
+                    service_name=output.service,
+                    service=service,
+                    payload=payload,
+                )
+                return self._RetriedNotificationDelivery(
+                    target=target,
+                    delivery=MonitorNotificationDelivery(
+                        profile_name=output.profile,
+                        renderer=output.renderer,
+                        service_name=output.service,
+                        notifier_plugin=service.plugin,
+                        payload=payload,
+                    ),
+                    attempts=attempts,
+                )
+            except Exception as exc:
+                last_error = exc
+        raise MonitorExecutionStageError(
+            stage="notifications",
+            message=str(last_error) if last_error is not None else "notification failed",
+            attempts=attempts,
+            target=target,
         )
 
     def _persist_monitor_notifications_artifact(
@@ -840,14 +1007,14 @@ class MonitorExecutionService:
         artifact_store: ArtifactStore,
         analysis: MonitorAnalysis,
         source_data: MonitorSourceData | None = None,
-    ) -> PersistedMonitorArtifact | None:
-        notifications = self._build_monitor_notifications(
+    ) -> tuple[PersistedMonitorArtifact | None, tuple[tuple[str, int], ...]]:
+        notifications, notification_attempts = self._build_monitor_notifications(
             monitor,
             analysis=analysis,
             source_data=source_data,
         )
         if notifications is None:
-            return None
+            return None, notification_attempts
 
         document_id = f"{monitor.id}-notifications"
         latest_document = document_repository.get_latest(document_id)
@@ -864,7 +1031,7 @@ class MonitorExecutionService:
             content_type="application/json",
             data=json.dumps(asdict(notifications), separators=(",", ":")).encode("utf-8"),
         )
-        return PersistedMonitorArtifact(document=document, artifact=artifact)
+        return PersistedMonitorArtifact(document=document, artifact=artifact), notification_attempts
 
     def _build_monitor_execution_plan_binding(
         self,

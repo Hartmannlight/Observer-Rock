@@ -37,6 +37,31 @@ class _ExplodingAnalysisPlugin:
         raise RuntimeError(self.message)
 
 
+class _FlakyAnalysisPlugin:
+    def __init__(self, *, failures_before_success: int, success_output: object) -> None:
+        self.failures_before_success = failures_before_success
+        self.success_output = success_output
+        self.calls: list[tuple[str, str]] = []
+
+    def analyze(self, *, monitor, profile_name, profile, source_data=None) -> object:
+        self.calls.append((monitor.id, profile_name))
+        if len(self.calls) <= self.failures_before_success:
+            raise RuntimeError(f"analysis exploded attempt {len(self.calls)}")
+        return self.success_output
+
+
+class _FlakyNotifierPlugin:
+    def __init__(self, *, failures_before_success: int) -> None:
+        self.failures_before_success = failures_before_success
+        self.calls: list[tuple[str, str, str]] = []
+
+    def notify(self, *, monitor, service_name, service, payload: str) -> object:
+        self.calls.append((monitor.id, service_name, payload))
+        if len(self.calls) <= self.failures_before_success:
+            raise RuntimeError(f"notification exploded attempt {len(self.calls)}")
+        return {"service_name": service_name, "payload": payload}
+
+
 def test_cli_executes_named_monitor_happy_path_with_workspace_defaults(
     tmp_path: Path,
     capsys,
@@ -398,10 +423,13 @@ def test_cli_fails_for_source_plugin_runtime_error(
     state_root = workspace / ".observer_rock"
 
     assert exit_code == 1
-    assert captured.out == ""
+    assert "workspace status=LOADED" in captured.out
+    assert "run status=STARTED monitor=source-failure-monitor" in captured.out
+    assert "source status=FAILED attempts=1 error=source fetch exploded" in captured.out
+    assert "run status=FAILED monitor=source-failure-monitor" in captured.out
     assert (
         captured.err
-        == "source-failure-monitor FAILED: source fetch exploded\n"
+        == "source-failure-monitor FAILED stage=source attempts=1: source fetch exploded\n"
     )
     assert (state_root / "runs.db").exists()
     assert (state_root / "documents.db").exists()
@@ -466,10 +494,14 @@ def test_cli_fails_for_analysis_plugin_runtime_error(
     state_root = workspace / ".observer_rock"
 
     assert exit_code == 1
-    assert captured.out == ""
+    assert "workspace status=LOADED" in captured.out
+    assert "run status=STARTED monitor=analysis-failure-monitor" in captured.out
+    assert "source status=COMPLETED document=analysis-failure-monitor-source-data@v1" in captured.out
+    assert "analysis status=FAILED target=summary_v2 attempts=1 error=analysis exploded" in captured.out
+    assert "run status=FAILED monitor=analysis-failure-monitor" in captured.out
     assert (
         captured.err
-        == "analysis-failure-monitor FAILED: analysis exploded\n"
+        == "analysis-failure-monitor FAILED stage=analysis target=summary_v2 attempts=1: analysis exploded\n"
     )
     assert (state_root / "runs.db").exists()
     assert (state_root / "documents.db").exists()
@@ -780,3 +812,258 @@ def test_cli_reader_missing_analysis_artifact_existing_document(
     )
     with pytest.raises(FileNotFoundError, match="monitor_analysis.json"):
         analysis_reader.load_latest(monitor_id="missing-ana-artifact")
+
+
+def test_cli_retries_analysis_until_success_when_profile_allows_retries(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "services.yml").write_text(
+        "services:\n"
+        "  openai_strong:\n"
+        "    plugin: openai\n",
+        encoding="utf-8",
+    )
+    (workspace / "analysis_profiles.yml").write_text(
+        "analysis_profiles:\n"
+        "  summary_v2:\n"
+        "    plugin: llm_extract\n"
+        "    model_service: openai_strong\n"
+        "    retries: 2\n",
+        encoding="utf-8",
+    )
+    (workspace / "monitors.yml").write_text(
+        "monitors:\n"
+        "  - id: retry-analysis-monitor\n"
+        "    schedule: '*/5 * * * *'\n"
+        "    source:\n"
+        "      plugin: reddit_fetch\n"
+        "    analyses:\n"
+        "      - profile: summary_v2\n",
+        encoding="utf-8",
+    )
+
+    source_plugin = _RecordingSourcePlugin(
+        payload=[{"source_id": "item-001", "content": "first post"}]
+    )
+    analysis_plugin = _FlakyAnalysisPlugin(
+        failures_before_success=2,
+        success_output={"record_count": 1, "source_ids": ["item-001"]},
+    )
+
+    exit_code = main(
+        [
+            "run-monitor",
+            "retry-analysis-monitor",
+            "--workspace",
+            str(workspace),
+        ],
+        source_plugins={"reddit_fetch": source_plugin},
+        analysis_plugins={"llm_extract": analysis_plugin},
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "analysis attempts summary_v2=3" in captured.out
+    assert "analysis status=COMPLETED document=retry-analysis-monitor-analysis-output@v1" in captured.out
+    assert analysis_plugin.calls == [
+        ("retry-analysis-monitor", "summary_v2"),
+        ("retry-analysis-monitor", "summary_v2"),
+        ("retry-analysis-monitor", "summary_v2"),
+    ]
+
+
+def test_cli_fails_analysis_after_retry_budget_is_exhausted(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "services.yml").write_text(
+        "services:\n"
+        "  openai_strong:\n"
+        "    plugin: openai\n",
+        encoding="utf-8",
+    )
+    (workspace / "analysis_profiles.yml").write_text(
+        "analysis_profiles:\n"
+        "  summary_v2:\n"
+        "    plugin: llm_extract\n"
+        "    model_service: openai_strong\n"
+        "    retries: 1\n",
+        encoding="utf-8",
+    )
+    (workspace / "monitors.yml").write_text(
+        "monitors:\n"
+        "  - id: exhausted-analysis-monitor\n"
+        "    schedule: '*/5 * * * *'\n"
+        "    source:\n"
+        "      plugin: reddit_fetch\n"
+        "    analyses:\n"
+        "      - profile: summary_v2\n",
+        encoding="utf-8",
+    )
+
+    source_plugin = _RecordingSourcePlugin(
+        payload=[{"source_id": "item-001", "content": "first post"}]
+    )
+    analysis_plugin = _FlakyAnalysisPlugin(
+        failures_before_success=2,
+        success_output={"record_count": 1},
+    )
+
+    exit_code = main(
+        [
+            "run-monitor",
+            "exhausted-analysis-monitor",
+            "--workspace",
+            str(workspace),
+        ],
+        source_plugins={"reddit_fetch": source_plugin},
+        analysis_plugins={"llm_extract": analysis_plugin},
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "analysis status=FAILED target=summary_v2 attempts=2 error=analysis exploded attempt 2" in captured.out
+    assert (
+        captured.err
+        == "exhausted-analysis-monitor FAILED stage=analysis target=summary_v2 attempts=2: analysis exploded attempt 2\n"
+    )
+    assert len(analysis_plugin.calls) == 2
+
+
+def test_cli_retries_notifications_until_success_when_service_allows_retries(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "services.yml").write_text(
+        "services:\n"
+        "  local_model:\n"
+        "    plugin: noop_model\n"
+        "  alerts:\n"
+        "    plugin: flaky_notifier\n"
+        "    retries: 1\n",
+        encoding="utf-8",
+    )
+    (workspace / "analysis_profiles.yml").write_text(
+        "analysis_profiles:\n"
+        "  digest_v1:\n"
+        "    plugin: builtin_summary\n"
+        "    model_service: local_model\n",
+        encoding="utf-8",
+    )
+    (workspace / "monitors.yml").write_text(
+        "monitors:\n"
+        "  - id: retry-notification-monitor\n"
+        "    schedule: '*/5 * * * *'\n"
+        "    source:\n"
+        "      plugin: builtin_json_file\n"
+        "      config:\n"
+        "        path: input/feed.json\n"
+        "    analyses:\n"
+        "      - profile: digest_v1\n"
+        "    outputs:\n"
+        "      - profile: digest_v1\n"
+        "        renderer: builtin_digest\n"
+        "        service: alerts\n",
+        encoding="utf-8",
+    )
+    (workspace / "input").mkdir()
+    (workspace / "input" / "feed.json").write_text(
+        '[{"source_id":"item-001","content":"first post"}]',
+        encoding="utf-8",
+    )
+
+    notifier_plugin = _FlakyNotifierPlugin(failures_before_success=1)
+
+    exit_code = main(
+        [
+            "run-monitor",
+            "retry-notification-monitor",
+            "--workspace",
+            str(workspace),
+        ],
+        notifier_plugins={"flaky_notifier": notifier_plugin},
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, f"stdout={captured.out!r} stderr={captured.err!r}"
+    assert "notifications attempts digest_v1->alerts=2" in captured.out
+    assert "notifications status=COMPLETED document=retry-notification-monitor-notifications@v1" in captured.out
+    assert len(notifier_plugin.calls) == 2
+
+
+def test_cli_fails_notifications_after_retry_budget_is_exhausted(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "services.yml").write_text(
+        "services:\n"
+        "  local_model:\n"
+        "    plugin: noop_model\n"
+        "  alerts:\n"
+        "    plugin: flaky_notifier\n"
+        "    retries: 1\n",
+        encoding="utf-8",
+    )
+    (workspace / "analysis_profiles.yml").write_text(
+        "analysis_profiles:\n"
+        "  digest_v1:\n"
+        "    plugin: builtin_summary\n"
+        "    model_service: local_model\n",
+        encoding="utf-8",
+    )
+    (workspace / "monitors.yml").write_text(
+        "monitors:\n"
+        "  - id: exhausted-notification-monitor\n"
+        "    schedule: '*/5 * * * *'\n"
+        "    source:\n"
+        "      plugin: builtin_json_file\n"
+        "      config:\n"
+        "        path: input/feed.json\n"
+        "    analyses:\n"
+        "      - profile: digest_v1\n"
+        "    outputs:\n"
+        "      - profile: digest_v1\n"
+        "        renderer: builtin_digest\n"
+        "        service: alerts\n",
+        encoding="utf-8",
+    )
+    (workspace / "input").mkdir()
+    (workspace / "input" / "feed.json").write_text(
+        '[{"source_id":"item-001","content":"first post"}]',
+        encoding="utf-8",
+    )
+
+    notifier_plugin = _FlakyNotifierPlugin(failures_before_success=2)
+
+    exit_code = main(
+        [
+            "run-monitor",
+            "exhausted-notification-monitor",
+            "--workspace",
+            str(workspace),
+        ],
+        notifier_plugins={"flaky_notifier": notifier_plugin},
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "analysis status=COMPLETED document=exhausted-notification-monitor-analysis-output@v1" in captured.out
+    assert "notifications status=FAILED target=digest_v1->alerts attempts=2 error=notification exploded attempt 2" in captured.out
+    assert (
+        captured.err
+        == "exhausted-notification-monitor FAILED stage=notifications target=digest_v1->alerts attempts=2: notification exploded attempt 2\n"
+    )
+    assert len(notifier_plugin.calls) == 2

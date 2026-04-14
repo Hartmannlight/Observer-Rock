@@ -69,7 +69,16 @@ def test_python_module_run_monitor_executes_successfully_in_subprocess(
 
     assert completed.returncode == 0
     assert completed.stderr == ""
-    assert completed.stdout == f"monitor-123 COMPLETED {workspace / '.observer_rock' / 'artifacts'}\n"
+    assert "workspace status=LOADED" in completed.stdout
+    assert "run status=STARTED monitor=monitor-123" in completed.stdout
+    assert "source status=COMPLETED document=monitor-123-source-data@v1" in completed.stdout
+    assert "analysis status=COMPLETED document=monitor-123-analysis-output@v1" in completed.stdout
+    assert "notifications status=SKIPPED reason=no_outputs" in completed.stdout
+    assert "run status=COMPLETED monitor=monitor-123" in completed.stdout
+    assert (
+        "monitor-123 COMPLETED source=monitor-123-source-data@v1 "
+        "analysis=monitor-123-analysis-output@v1 notifications=none"
+    ) in completed.stdout
     assert (
         artifact.read_text(encoding="utf-8") == '{"monitor_id":"monitor-123","outputs":'
         '[{"profile_name":"summary_v2","plugin":"workspace_analysis","output":'

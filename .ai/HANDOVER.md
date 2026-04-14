@@ -9,10 +9,12 @@ Start here when opening a new chat or agent session.
 3. `.ai/TASK_BACKLOG.md`
 4. `src/observer_rock/cli/runtime.py`
 5. `src/observer_rock/application/monitoring.py`
+6. `src/observer_rock/cli/__init__.py`
 
 ## Current Product State
 
-Observer Rock already has the framework foundation:
+Observer Rock now has a usable first operator slice plus the start of runtime
+hardening:
 
 - typed workspace config loading and cross-file validation
 - SQLite-backed run and document persistence
@@ -20,11 +22,21 @@ Observer Rock already has the framework foundation:
 - source and analysis plugin protocols plus registry loading
 - canonical source-to-analysis execution path
 - operator-facing CLI commands:
+  - `python -m observer_rock init-workspace --workspace <path>`
+  - `python -m observer_rock validate-workspace`
+  - `python -m observer_rock list-monitors`
   - `python -m observer_rock run-monitor <monitor-id>`
   - `python -m observer_rock run-scheduler`
+- runnable example workspace under `examples/file_digest`
+- runtime observability for monitor and scheduler execution
+- retry boundaries for analysis profiles and notifier services
 
-The project is not done yet. The main missing value is a full operator slice
-with one real example source, a renderer, a notifier, and one stable e2e flow.
+The main remaining work is no longer the first slice itself. The next real gap
+is finishing D4 hardening:
+
+- artifact inspection helpers
+- final scheduler ergonomics after retries
+- then a decision on whether D3 can be closed formally
 
 ## Working Rules
 

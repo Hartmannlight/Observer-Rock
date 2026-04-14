@@ -13,6 +13,7 @@ class ServiceConfig(BaseModel):
     token: str | None = None
     channel_id: str | None = Field(default=None, min_length=1)
     path: str | None = Field(default=None, min_length=1)
+    retries: int | None = Field(default=None, ge=0)
 
 
 class ServicesConfig(BaseModel):

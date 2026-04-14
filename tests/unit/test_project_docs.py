@@ -24,4 +24,4 @@ def test_task_backlog_exists_with_delivery_packages() -> None:
     assert "# Observer Rock Task Backlog" in contents
     assert "delivery packages" in contents
     assert "`D2` Stabilize one operator-facing vertical slice" in contents
-    assert "Status: next" in contents
+    assert "Status: in progress" in contents

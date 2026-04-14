@@ -21,6 +21,7 @@ def workspace_tmp_root() -> Path:
 def tmp_path(request: pytest.FixtureRequest, workspace_tmp_root: Path) -> Path:
     # Keep tmp data inside the workspace to avoid Windows ACL issues in the user temp dir.
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.node.name).strip("-") or "test"
+    safe_name = safe_name[:40].rstrip("-") or "test"
     path = workspace_tmp_root / f"{safe_name}-{uuid4().hex}"
     path.mkdir(parents=True, exist_ok=False)
     yield path

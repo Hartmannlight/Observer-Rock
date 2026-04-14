@@ -150,3 +150,23 @@ services:
         load_services_config(config_path)
 
     assert "channel_id" in str(exc_info.value)
+
+
+def test_rejects_service_with_negative_retries(tmp_path: Path) -> None:
+    from observer_rock.config.loader import load_services_config
+    from observer_rock.config.models import ConfigValidationError
+
+    config_path = write_services_config(
+        tmp_path,
+        """
+services:
+  discord_alerts:
+    plugin: discord
+    retries: -1
+""".strip(),
+    )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_services_config(config_path)
+
+    assert "retries" in str(exc_info.value)
