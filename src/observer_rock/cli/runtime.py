@@ -76,9 +76,11 @@ def run_scheduler_command(
     workspace_root: Path,
     source_plugins: Mapping[str, object] | None = None,
     analysis_plugins: Mapping[str, object] | None = None,
+    tick: datetime | None = None,
 ) -> RunSchedulerCommandResult:
     workspace_config = load_workspace_config(workspace_root)
     configured_monitors = workspace_config.monitors.monitors if workspace_config.monitors else ()
+    effective_tick = tick or _scheduler_now()
     monitor_results = tuple(
         run_monitor_command(
             workspace_root=workspace_root,
@@ -87,7 +89,7 @@ def run_scheduler_command(
             analysis_plugins=analysis_plugins,
         )
         for monitor in configured_monitors
-        if _is_schedule_due(monitor.schedule, _scheduler_now())
+        if _is_schedule_due(monitor.schedule, effective_tick)
     )
     return RunSchedulerCommandResult(
         configured_monitor_count=len(configured_monitors),

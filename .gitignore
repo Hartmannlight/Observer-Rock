@@ -15,6 +15,7 @@ __pycache__/
 .tmp-docs.db
 .tmp-runs.db
 .tmp_patch_probe.txt
+.observer_rock/
 temp_root/
 test_tmp/
 

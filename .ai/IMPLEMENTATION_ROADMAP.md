@@ -2,63 +2,51 @@
 
 ## Summary
 
-Observer Rock is currently a small Python package for typed workspace config,
-run/document persistence, artifact storage, and monitor-analysis orchestration.
-The codebase should continue to grow in small TDD-sized slices so future agents
-can keep changes safe and localized.
+Observer Rock now has a stable framework base plus a minimal operator CLI. The
+next phase is not more foundation work. The next phase is to finish one usable
+end-to-end monitoring slice quickly without dropping test discipline.
 
 ## Architecture Overview
 
-- Current package layout under `src/observer_rock/`:
-  - `application/` for use cases, orchestration services, repository contracts,
-    document/artifact abstractions, and test helpers
-  - `config/` for typed config models plus workspace and YAML loading
+- current package layout under `src/observer_rock/`:
+  - `application/` for orchestration services and domain-style records
+  - `config/` for typed config models and YAML loading
   - `infrastructure/` for SQLite and filesystem-backed adapters
-  - `plugins/` for the current analysis-plugin seam and registry
-- Planned but not yet present in `src/observer_rock/`:
+  - `plugins/` for source and analysis plugin seams
   - `cli/` for operator-facing commands
-  - any separate `domain/` package if pure business types outgrow
-    `application/`
-  - broader plugin families such as source, fetch, render, or notify plugins
+- planned but not yet present in a usable form:
+  - renderer support
+  - notifier support
+  - one stable example workspace and e2e slice
+  - packaged production-facing plugins beyond test-focused built-ins
 
 ## TDD Workflow
 
-1. Write one failing test for one behavior.
-2. Run the focused test and verify the expected failure.
-3. Write the smallest change that makes the test pass.
-4. Re-run the focused test and then the relevant suite.
-5. Refactor only after green.
-6. Update backlog status and notes before ending the session.
+1. Define one delivery slice with visible operator value.
+2. Write the smallest useful set of failing tests for that slice.
+3. Implement the full slice end-to-end.
+4. Run the focused suite for that slice.
+5. Run the full suite once before closing the package.
+6. Update status, plan, and backlog only at package boundaries.
 
 ## Test Architecture
 
-- Current test layout under `tests/`:
+- current test layout under `tests/`:
   - `unit/` for config, plugin, and application behavior
   - `component/` for SQLite/filesystem-backed integration slices
-  - `conftest.py` for shared fixtures
-- Planned but not yet present:
-  - `contracts/` for plugin contract suites
+  - `conftest.py` for shared fixtures and workspace-local temp paths
+- planned but not yet present:
   - `e2e/` for a minimal end-to-end monitor run
 
-Prefer in-memory fakes over mocks. Keep transport and I/O boundaries thin.
+Prefer in-memory fakes over mocks. Keep I/O boundaries thin.
 
-## Package Boundaries For Testability
+## Delivery Workflow
 
-- business logic must not live in CLI commands
-- renderers format data but do not send it
-- notifiers send rendered payloads but do not decide business rules
-- repositories are interface-first and replaceable with fakes
-- config validation must run without booting the application
-
-## Agent Workflow
-
-1. Read this roadmap.
-2. Read `.ai/TASK_BACKLOG.md`.
-3. Pick the highest-priority unblocked task.
-4. Implement it with a red-green-refactor cycle.
-5. Run the listed verification commands.
-6. Update task state and notes.
-7. Add follow-up tasks if new work appears.
+1. Read `.ai/STATUS.md` and `.ai/DELIVERY_PLAN.md`.
+2. Pick one unblocked delivery package from `.ai/TASK_BACKLOG.md`.
+3. Stay on that package until it is implemented, tested, and documented.
+4. Ask the user only when blocked by a real product decision or an external dependency.
+5. Use subagents only for independent side work, not for the main architecture path.
 
 ## Milestones
 
@@ -73,32 +61,36 @@ Typed config loading and workspace composition. Completed.
 ### Milestone 2
 
 Application services, SQLite persistence, artifact storage, and the first
-plugin-backed monitor analysis slices. In progress in the current tree.
+plugin-backed monitor analysis slices. Completed.
 
 ### Milestone 3
 
-Broaden monitor orchestration, plugin contracts, and read-side workflows without
-breaking the current package boundaries.
+Operator-facing CLI surface for monitor execution and scheduler ticks.
+Substantially complete in the current tree.
 
 ### Milestone 4
 
-Add still-missing planned areas such as CLI entrypoints, contract suites, and a
-minimal end-to-end slice when the current seams stabilize.
+Finish one vertical operator slice:
+
+- one example source
+- one renderer
+- one notifier
+- one example workspace
+- one stable end-to-end test
 
 ## Definition Of Done
 
-A task is done only when:
+A delivery package is done only when:
 
-- the relevant test started red and ended green
+- the relevant slice-level tests started red and ended green
 - the focused suite passes
+- the full suite passes before merge or push
 - code and docs are updated together
-- no hidden architecture decision is left inside the task
+- the package leaves the project closer to a usable product, not only a cleaner abstraction
 
 ## Open Risks
 
-- `application/` currently carries some domain-style records; splitting a
-  dedicated `domain/` package too early would add churn without clear benefit
-- `plugins/` is intentionally narrow today; new plugin families should not be
-  documented as existing until package directories and tests are present
-- local temp and cache artifacts are already accumulating in the repo root, so
-  hygiene depends on keeping ignore rules aligned with the tools in use
+- the framework can still consume time without shipping user-visible value if
+  work returns to abstraction-first slicing
+- temp and cache artifacts can still pollute local analysis if cleanup discipline
+  regresses

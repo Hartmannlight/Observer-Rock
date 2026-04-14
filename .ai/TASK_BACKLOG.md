@@ -1,264 +1,42 @@
 # Observer Rock Task Backlog
 
-Template reminder for new items:
+This backlog now tracks delivery packages instead of micro-invariants.
 
-- Title: `PX-000 Short task name`
-- Status: todo
-- Priority: P0
-- Depends on: none
-- Touches: `src/...`, `tests/...`
-- Why: one sentence explaining why this slice matters
-- First failing test: `path/to/test.py::test_name`
-- Test scope: unit | component | e2e
-- Expected red signal: expected failing behavior before implementation
-- Minimal production change: smallest code/doc change that should make it pass
-- Acceptance criteria:
-  - one observable outcome per line
-- Verification commands:
-  - `uv run pytest path/to/test.py -q`
-- Completion notes:
-  - short summary after the slice is done
+## Active
 
-## Now
+- `D1` Cleanup and delivery reset
+  - Status: done
+  - Scope: temp artifact hygiene, slimmer handover docs, ignore runtime state, remove obvious unused artifacts
 
-- Title: `P3-003 Add a first run-scheduler CLI tick`
-- Status: done
-- Priority: P3
-- Depends on: `P2-055`
-- Touches: `src/observer_rock/cli/__init__.py`, `src/observer_rock/cli/runtime.py`, `tests/unit/cli/test_run_scheduler.py`
-- Why: operators need a minimal scheduler entrypoint that can reuse the existing monitor execution wiring for one tick
-- First failing test: `tests/unit/cli/test_run_scheduler.py::test_run_scheduler_executes_the_configured_monitor_once`
-- Test scope: unit
-- Expected red signal: the CLI does not recognize `run-scheduler` yet, so the new scheduler tick cannot execute any configured monitor
-- Minimal production change: add a `run-scheduler` subcommand that loads configured monitors and delegates each due execution through the existing `run_monitor_command` path
-- Acceptance criteria:
-  - `run-scheduler` returns exit code `0` for a workspace with one runnable monitor
-  - the CLI writes a completion line that includes `monitor-123` and `COMPLETED`
-  - the configured source and analysis plugins are each invoked once for `monitor-123`
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_scheduler.py -q -p no:cacheprovider`
-- Completion notes:
-  - added a minimal `run-scheduler` CLI path that executes each configured monitor once via the existing monitor runtime and preserves current `run-monitor` behavior in nearby CLI regression coverage
+- `D2` Stabilize one operator-facing vertical slice
+  - Status: next
+  - Scope: one example source plugin, one renderer, one notifier, one example workspace, one end-to-end test
 
 ## Next
 
-- Title: `P3-007 Respect scheduler step intervals for non-matching ticks`
-- Status: done
-- Priority: P3
-- Depends on: `P3-006`
-- Touches: `src/observer_rock/cli/runtime.py`, `tests/unit/cli/test_run_scheduler.py`
-- Why: operators need step-based schedules like `*/5` to run only on ticks that actually match the interval
-- First failing test: `tests/unit/cli/test_run_scheduler.py::test_run_scheduler_skips_step_interval_monitor_on_non_matching_tick`
-- Test scope: unit
-- Expected red signal: `run-scheduler` currently treats `*/5` as always due, so a monitor still runs on minute `6`
-- Minimal production change: teach the scheduler field matcher to evaluate `*/N` fields by modulo instead of treating every step expression as due
-- Acceptance criteria:
-  - `run-scheduler` returns exit code `0` when a `*/5` monitor is skipped on a minute `6` tick
-  - the CLI writes no stdout or stderr when that skipped monitor is the only configured monitor
-  - skipped `*/5` monitors do not invoke their configured source or analysis plugins on non-matching ticks
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_scheduler.py::test_run_scheduler_skips_step_interval_monitor_on_non_matching_tick -q -p no:cacheprovider`
-- Completion notes:
-  - scheduler step expressions like `*/5` now skip non-matching ticks by applying modulo matching in the CLI runtime schedule check
+- `D3` Improve operator usability
+  - Status: queued
+  - Scope: better CLI output, clearer example config, setup notes, failure-path docs
 
-- Title: `P3-006 Skip non-due monitors during a scheduler tick`
-- Status: done
-- Priority: P3
-- Depends on: `P3-005`
-- Touches: `src/observer_rock/cli/runtime.py`, `tests/unit/cli/test_run_scheduler.py`
-- Why: operators need each scheduler tick to execute only monitors whose configured schedule is due at that tick
-- First failing test: `tests/unit/cli/test_run_scheduler.py::test_run_scheduler_skips_monitor_when_schedule_is_not_due_for_current_tick`
-- Test scope: unit
-- Expected red signal: `run-scheduler` currently executes every configured monitor in the workspace, even when a monitor's schedule is not due for the current tick
-- Minimal production change: add a scheduler due-check in the runtime path that compares each monitor schedule against the current tick before delegating to `run_monitor_command`
-- Acceptance criteria:
-  - `run-scheduler` returns exit code `0` when a configured monitor is skipped for a non-due tick
-  - the CLI writes no stdout or stderr for a scheduler tick that skips the only configured monitor
-  - skipped non-due monitors do not invoke their configured source or analysis plugins
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_scheduler.py::test_run_scheduler_skips_monitor_when_schedule_is_not_due_for_current_tick -q -p no:cacheprovider`
-- Completion notes:
-  - `run-scheduler` skips non-due monitors for the current tick and treats a tick with configured-but-not-due monitors as a quiet success
-
-- Title: `P3-005 Suppress scheduler success output when any monitor runtime fails`
-- Status: done
-- Priority: P3
-- Depends on: `P3-004`
-- Touches: `src/observer_rock/cli/__init__.py`, `tests/unit/cli/test_run_scheduler.py`
-- Why: operators need `run-scheduler` to present a failed tick as a clear error instead of mixing success output into the same invocation
-- First failing test: `tests/unit/cli/test_run_scheduler.py::test_run_scheduler_suppresses_success_output_when_any_monitor_runtime_fails`
-- Test scope: unit
-- Expected red signal: `run-scheduler` currently prints completed monitor lines to stdout before surfacing a later monitor runtime failure on stderr
-- Minimal production change: detect scheduler monitor execution failures before emitting any success lines, then return exit code `1` with only the failing monitor message on stderr
-- Acceptance criteria:
-  - `run-scheduler` returns exit code `1` when any scheduled monitor execution fails at runtime
-  - the CLI writes no stdout for that failed scheduler tick
-  - the CLI writes `<monitor-id> FAILED: <message>` to stderr for the failing monitor
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_scheduler.py::test_run_scheduler_suppresses_success_output_when_any_monitor_runtime_fails -q -p no:cacheprovider`
-- Completion notes:
-  - `run-scheduler` now checks the full tick for runtime failures before emitting success lines, so a failed tick only writes the failing monitor message to stderr
-
-- Title: `P3-004 Surface missing scheduler monitors as a CLI usage error`
-- Status: done
-- Priority: P3
-- Depends on: `P3-003`
-- Touches: `src/observer_rock/cli/__init__.py`, `tests/unit/cli/test_run_scheduler.py`
-- Why: operators need `run-scheduler` to fail clearly instead of silently succeeding when the workspace has no configured monitors
-- First failing test: `tests/unit/cli/test_run_scheduler.py::test_run_scheduler_exits_with_clear_error_when_workspace_defines_no_monitors`
-- Test scope: unit
-- Expected red signal: `run-scheduler` currently returns `0` with no output when the workspace omits `monitors.yml`
-- Minimal production change: treat an empty scheduler monitor set as an operator configuration error with exit code `2` and a clear stderr message
-- Acceptance criteria:
-  - `run-scheduler` returns exit code `2` when the workspace defines no monitors
-  - the CLI writes `Error: Workspace config does not define any monitors` to stderr
-  - the CLI does not write anything to stdout for this failure path
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_scheduler.py -q -p no:cacheprovider`
-- Completion notes:
-  - `run-scheduler` now treats a workspace without configured monitors as an operator configuration error and exits with code `2` after printing a clear stderr message
+- `D4` Production-hardening for the first slice
+  - Status: queued
+  - Scope: logging, retry boundaries, better scheduler ergonomics, artifact inspection helpers
 
 ## Later
 
-Capture only genuinely deferred work here. Good candidates based on the current
-tree are:
+- `D5` Plugin contract suite
+  - Status: later
+  - Scope: reusable tests for source, analysis, renderer, and notifier plugins once those seams stabilize
 
-- add `tests/contracts/` once plugin behavior needs reusable contract suites
-- add `tests/e2e/` only after a stable operator-facing workflow exists
-- add `src/observer_rock/cli/` when there is a concrete command surface to test
-- reconsider a separate `domain/` package only if pure business types start
-  crowding `application/`
+- `D6` Second real monitor integration
+  - Status: later
+  - Scope: prove the framework after the first vertical slice by adding a second source with minimal new core code
 
-## Done
+## Closed Foundation
 
-- Title: `P3-002 Surface invalid plugin imports as a CLI usage error`
-- Status: done
-- Priority: P3
-- Depends on: `P3-001`
-- Touches: `src/observer_rock/cli/__init__.py`, `src/observer_rock/cli/runtime.py`, `tests/unit/cli/test_run_monitor.py`
-- Why: operators need a clear stderr error instead of a traceback when configured plugin modules cannot be imported
-- First failing test: `tests/unit/cli/test_run_monitor.py::test_run_monitor_exits_with_clear_error_for_invalid_plugin_import`
-- Test scope: unit
-- Expected red signal: the CLI bubbles plugin module import failures instead of translating them into an operator-facing usage error
-- Minimal production change: treat invalid configured plugin imports as exit code `2` and print the import failure message to stderr
-- Acceptance criteria:
-  - `run-monitor` returns exit code `2` when `plugin_import_paths` references a missing module
-  - the CLI writes `Error: Could not import plugin module '<module>'` to stderr
-  - the CLI does not write anything to stdout for this failure path
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_monitor.py -q -p no:cacheprovider`
-- Completion notes:
-  - CLI operator error handling now covers both unknown monitors and broken configured plugin imports
-
-- Title: `P3-001 Surface unknown monitor as a CLI usage error`
-- Status: done
-- Priority: P3
-- Depends on: none
-- Touches: `src/observer_rock/cli.py`, `tests/unit/cli/test_run_monitor.py`
-- Why: operators need a clear, non-stacktrace failure when a requested monitor id is not configured
-- First failing test: `tests/unit/cli/test_run_monitor.py::test_run_monitor_exits_with_clear_error_for_unknown_monitor`
-- Test scope: unit
-- Expected red signal: importing or invoking the CLI cannot yet produce a dedicated unknown-monitor exit path
-- Minimal production change: add a minimal `run-monitor` CLI entry that loads the workspace, checks monitor ids, and returns exit code `2` with a clear stderr message
-- Acceptance criteria:
-  - `run-monitor` returns exit code `2` when `--monitor-id` is not configured
-  - the CLI writes `Error: unknown monitor '<id>'` to stderr
-  - the CLI does not write anything to stdout for this failure path
-- Verification commands:
-  - `.\\.venv\\Scripts\\python -m pytest tests\\unit\\cli\\test_run_monitor.py -q -p no:cacheprovider`
-- Completion notes:
-  - added the first minimal CLI module and proved the unknown-monitor error path red-to-green
-
-- P0-001 Create package skeleton
-- P0-002 Create persistent roadmap and backlog
-- P1-001 Load minimal services config
-- P1-002 Compose workspace config from typed slices
-- P1-003 Load minimal analysis profile config
-- P1-004 Compose workspace config with services and analysis profiles
-- P1-005 Load minimal monitors config
-- P1-006 Compose workspace config with services, analysis profiles, and monitors
-- P1-007 Add optional analyses to monitor definitions
-- P1-008 Raise a clear workspace error when services.yml is missing
-- P1-009 Validate monitor analysis profile references during workspace composition
-- P1-010 Require analysis_profiles.yml when monitors declare analyses
-- P1-011 Validate monitor analysis references only when analyses are declared
-- P1-012 Reject duplicate monitor ids in monitors.yml
-- P1-013 Reject blank monitor ids
-- P1-014 Reject negative analysis profile retries
-- P1-015 Reject blank analysis profile model_service values
-- P1-016 Validate analysis profile model_service references during workspace composition
-- P1-017 Reject blank service plugins
-- P1-018 Reject blank monitor schedules
-- P1-019 Reject blank monitor source plugins
-- P1-020 Reject blank analysis profile plugins explicitly in tests
-- P1-021 Reject duplicate analysis profile references within one monitor
-- P1-022 Reject blank monitor analysis profiles
-- P1-023 Validate analysis profile plugins via explicit non-empty service-style constraints
-- P1-024 Keep workspace composition strict about analysis profile service references
-- P1-025 Add non-empty constraints for service, monitor, and source plugin names
-- P1-026 Add non-empty constraints for monitor schedules and ids
-- P1-027 Reject blank optional prompt/schema references in analysis profiles
-- P1-028 Reject blank optional service environment and channel references
-- P1-029 Reject blank output_schema values explicitly in tests
-- P1-030 Review regression-only items for possible backlog closure
-- P2-001 Define repository contracts with in-memory fakes
-- P2-002 Start run use case against a repository contract
-- P2-003 Add monitor_id to started runs
-- P2-004 Add a run lookup use case over the repository contract
-- P2-005 Add a finish_run use case that transitions status
-- P2-006 Add a list-runs contract to the in-memory repository
-- P2-007 Add a failing-path test for finish_run on unknown run IDs
-- P2-008 Add a list-runs use case over the repository contract
-- P2-009 Add a status-filtered list-runs use case
-- P2-010 Reject duplicate run ids on repository create
-- P2-011 Add a monitor-filtered list-runs use case
-- P2-012 Expose finish_run unknown-run behavior only as regression coverage
-- P2-013 Add get_latest_run_for_monitor as a read-side use case
-- P2-014 Keep list_runs ordering while filtering by monitor_id
-- P2-015 Keep repository create() distinct from save() semantics
-- P2-016 Add a combined status+monitor filter test for list_runs
-- P2-017 Add count_runs as a filtered read-side use case
-- P2-018 Extend get_latest_run_for_monitor with optional status filtering
-- P2-019 Add monitor-aware get_run filtering
-- P2-020 Add count_runs over the existing filtered list path
-- P2-021 Extend get_latest_run_for_monitor with optional status filtering
-- P2-022 Separate create/save semantics in the in-memory repository
-- P2-023 Introduce a typed RunStatus for run records
-- P2-024 Add has_run as a boolean read-side use case
-- P2-025 Add terminal-state semantics to RunStatus
-- P2-026 Separate regression coverage from implementation work for open lifecycle items
-- P2-027 Add an explicit boolean existence use case over get_run
-- P2-028 Add transition semantics to RunStatus
-- P2-029 Normalize RunRecord status values to RunStatus at construction time
-- P2-031 Add a SQLite-backed persistent run repository
-- P2-032 Add a failed terminal state and fail_run use case
-- P2-033 Add basic lifecycle timestamps to RunRecord
-- P2-034 Add a thin RunService orchestration shell over run use cases
-- P2-035 Add a first execute_run workflow on RunService
-- P2-036 Make RunService workflow timestamps deterministic via an injectable clock
-- P2-037 Enforce basic status/timestamp invariants in RunRecord
-- P2-038 Return structured RunExecutionResult values from RunService.execute_run
-- P2-039 Add a first MonitorExecutionService over WorkspaceConfig and RunService
-- P2-040 Return structured MonitorExecutionResult values from MonitorExecutionService
-- P2-041 Add a first concrete MonitorSnapshot payload and workflow
-- P2-042 Add a concrete MonitorAnalysisPlan payload and workflow
-- P2-043 Add an aggregated MonitorDefinition payload and workflow
-- P2-044 Add a concrete MonitorExecutionPlan payload and workflow
-- P2-045 Add a typed Document domain model and repository contract
-- P2-046 Add a SQLite-backed persistent document repository
-- P2-047 Add a first filesystem-backed artifact store
-- P2-048 Persist a monitor snapshot artifact through MonitorExecutionService
-- P2-049 Prove repeated monitor snapshot artifact executions advance document versions
-- P2-050 Persist a monitor execution plan artifact through MonitorExecutionService
-- P2-051 Persist a monitor definition artifact through MonitorExecutionService
-- P2-052 Persist a monitor analysis plan artifact through MonitorExecutionService
-- P2-053 Add the first minimal plugin registry slice
-- P2-054 Validate monitor analysis plugins through PluginRegistry
-- P2-055 Execute a minimal analysis plugin through MonitorExecutionService
-- P2-056 Add a first downstream consumer for persisted monitor analysis output
-- P2-057 Add a first source plugin execution and normalization slice
-- P2-058 Persist normalized monitor source artifacts
-- P2-059 Add a read-side loader for persisted monitor source data
-- P2-060 Load latest persisted source data inside monitor analysis execution
-- P2-061 Increment monitor source artifact document versions
-- P2-062 Add a canonical source-to-analysis monitor workflow
+- typed config and workspace composition
+- run lifecycle and SQLite persistence
+- document repository and artifact storage
+- source and analysis plugin execution
+- `run-monitor` CLI
+- `run-scheduler` CLI tick and due-check behavior

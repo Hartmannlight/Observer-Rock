@@ -1,6 +1,7 @@
 import argparse
 import sys
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 
 from observer_rock.cli.runtime import run_monitor_command, run_scheduler_command
@@ -29,6 +30,12 @@ def main(
         type=Path,
         default=Path.cwd(),
     )
+    run_scheduler_parser.add_argument(
+        "--tick",
+        type=datetime.fromisoformat,
+        default=None,
+        help="Optional ISO timestamp to evaluate schedules against.",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -48,6 +55,7 @@ def main(
                 workspace_root=args.workspace,
                 source_plugins=source_plugins,
                 analysis_plugins=analysis_plugins,
+                tick=args.tick,
             )
             if scheduler_result.configured_monitor_count == 0:
                 raise ValueError("Workspace config does not define any monitors")
