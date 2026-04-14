@@ -18,7 +18,12 @@ from tests._helpers import _RecordingSourcePlugin, _sequence_now_provider
 def test_monitor_execution_service_fetches_and_normalizes_source_records() -> None:
     plugin = _RecordingSourcePlugin(
         payload=[
-            {"source_id": " item-001 ", "content": "  first post  "},
+            {
+                "source_id": " item-001 ",
+                "content": "  first post  ",
+                "document_identity": "  council/2026-03-14/protocol  ",
+                "title": "  Council protocol  ",
+            },
             {"source_id": "item-002", "content": "second post"},
         ]
     )
@@ -60,8 +65,12 @@ def test_monitor_execution_service_fetches_and_normalizes_source_records() -> No
     assert len(execution.value.records) == 2
     assert execution.value.records[0].source_id == "item-001"
     assert execution.value.records[0].content == "first post"
+    assert execution.value.records[0].document_identity == "council/2026-03-14/protocol"
+    assert execution.value.records[0].title == "Council protocol"
     assert execution.value.records[1].source_id == "item-002"
     assert execution.value.records[1].content == "second post"
+    assert execution.value.records[1].document_identity is None
+    assert execution.value.records[1].title is None
     assert plugin.calls == ["monitor-123"]
 
 
@@ -122,7 +131,12 @@ def test_monitor_execution_service_passes_normalized_source_data_to_analysis_plu
             monitor_id="monitor-123",
             source_plugin="reddit_fetch",
             records=(
-                MonitorSourceRecord(source_id="item-001", content="first post"),
+                MonitorSourceRecord(
+                    source_id="item-001",
+                    content="first post",
+                    document_identity=None,
+                    title=None,
+                ),
             ),
         )
     ]

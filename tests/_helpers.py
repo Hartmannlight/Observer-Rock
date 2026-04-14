@@ -33,9 +33,11 @@ class _RecordingSourcePlugin:
     def __init__(self, payload: object) -> None:
         self.payload = payload
         self.calls: list[str] = []
+        self.fetch_contexts: list[object | None] = []
 
-    def fetch(self, *, monitor) -> object:
+    def fetch(self, *, monitor, fetch_context=None) -> object:
         self.calls.append(monitor.id)
+        self.fetch_contexts.append(fetch_context)
         return self.payload
 
 

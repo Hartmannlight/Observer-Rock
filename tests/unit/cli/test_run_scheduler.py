@@ -71,6 +71,7 @@ def test_run_scheduler_executes_the_configured_monitor_once(
     assert exit_code == 0
     assert "scheduler status=STARTED" in captured.out
     assert "tick=2026-03-14T12:05:00+00:00" in captured.out
+    assert "scheduler monitor=monitor-123 status=DUE schedule='*/5 * * * *'" in captured.out
     assert "run status=STARTED monitor=monitor-123" in captured.out
     assert "source status=COMPLETED document=monitor-123-source-data@v1" in captured.out
     assert "analysis status=COMPLETED document=monitor-123-analysis-output@v1" in captured.out
@@ -168,6 +169,8 @@ def test_run_scheduler_suppresses_success_output_when_any_monitor_runtime_fails(
 
     assert exit_code == 1
     assert "scheduler status=STARTED" in captured.out
+    assert "scheduler monitor=monitor-success status=DUE schedule='*/5 * * * *'" in captured.out
+    assert "scheduler monitor=monitor-failure status=DUE schedule='*/5 * * * *'" in captured.out
     assert "run status=COMPLETED monitor=monitor-success" in captured.out
     assert "analysis status=FAILED target=summary_v2 attempts=1 error=analysis exploded" in captured.out
     assert "Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=2 due=2 skipped=0 completed=1 failed=1" in captured.out
@@ -243,6 +246,7 @@ def test_run_scheduler_skips_monitor_when_schedule_is_not_due_for_current_tick(
         f"workspace={workspace} "
         "tick=2026-03-14T12:05:00+00:00 "
         "services=1 analysis_profiles=1 configured=1 due=0 skipped=1\n"
+        "scheduler monitor=monitor-not-due status=SKIPPED schedule='0 0 * * *' reason=not_due\n"
         "No monitors due at 2026-03-14T12:05:00+00:00 (1 configured)\n"
         "Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=1 due=0 skipped=1 completed=0 failed=0\n"
     )
@@ -312,9 +316,77 @@ def test_run_scheduler_skips_step_interval_monitor_on_non_matching_tick(
         f"workspace={workspace} "
         "tick=2026-03-14T12:06:00+00:00 "
         "services=1 analysis_profiles=1 configured=1 due=0 skipped=1\n"
+        "scheduler monitor=monitor-step-interval status=SKIPPED schedule='*/5 * * * *' reason=not_due\n"
         "No monitors due at 2026-03-14T12:06:00+00:00 (1 configured)\n"
         "Scheduler summary tick=2026-03-14T12:06:00+00:00 configured=1 due=0 skipped=1 completed=0 failed=0\n"
     )
     assert captured.err == ""
     assert source_plugin.calls == []
     assert analysis_plugin.calls == []
+
+
+def test_run_scheduler_reports_due_and_skipped_monitors_for_mixed_tick(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "services.yml").write_text(
+        "services:\n"
+        "  openai_strong:\n"
+        "    plugin: openai\n",
+        encoding="utf-8",
+    )
+    (workspace / "analysis_profiles.yml").write_text(
+        "analysis_profiles:\n"
+        "  summary_v2:\n"
+        "    plugin: llm_extract\n"
+        "    model_service: openai_strong\n",
+        encoding="utf-8",
+    )
+    (workspace / "monitors.yml").write_text(
+        "monitors:\n"
+        "  - id: due-monitor\n"
+        "    schedule: '*/5 * * * *'\n"
+        "    source:\n"
+        "      plugin: reddit_fetch\n"
+        "    analyses:\n"
+        "      - profile: summary_v2\n"
+        "  - id: later-monitor\n"
+        "    schedule: '0 0 * * *'\n"
+        "    source:\n"
+        "      plugin: reddit_fetch\n"
+        "    analyses:\n"
+        "      - profile: summary_v2\n",
+        encoding="utf-8",
+    )
+
+    source_plugin = _RecordingSourcePlugin(
+        payload=[{"source_id": "item-001", "content": "first post"}]
+    )
+    analysis_plugin = _SourceAwareAnalysisPlugin()
+
+    exit_code = main(
+        [
+            "run-scheduler",
+            "--workspace",
+            str(workspace),
+            "--tick",
+            "2026-03-14T12:05:00+00:00",
+        ],
+        source_plugins={"reddit_fetch": source_plugin},
+        analysis_plugins={"llm_extract": analysis_plugin},
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "scheduler monitor=due-monitor status=DUE schedule='*/5 * * * *'" in captured.out
+    assert (
+        "scheduler monitor=later-monitor status=SKIPPED schedule='0 0 * * *' reason=not_due"
+        in captured.out
+    )
+    assert "run status=STARTED monitor=due-monitor" in captured.out
+    assert "run status=STARTED monitor=later-monitor" not in captured.out
+    assert source_plugin.calls == ["due-monitor"]
+    assert analysis_plugin.calls == [("due-monitor", "summary_v2")]

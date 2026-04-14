@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict, dataclass
 from collections.abc import Mapping
+import inspect
 from typing import Callable, TypeVar
 
 from observer_rock.application.artifacts import ArtifactRef, ArtifactStore
@@ -14,6 +15,7 @@ from observer_rock.config.models import (
 )
 from observer_rock.config.workspace import WorkspaceConfig
 from observer_rock.plugins.registry import PluginRegistry
+from observer_rock.plugins.source import SourceFetchContext
 
 T = TypeVar("T")
 
@@ -71,6 +73,8 @@ class MonitorNotifications:
 class MonitorSourceRecord:
     source_id: str
     content: str
+    document_identity: str | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +201,37 @@ class MonitorSourceArtifactReader:
 
 
 @dataclass(frozen=True, slots=True)
+class PersistedMonitorNotificationsArtifact:
+    document: DocumentRecord
+    artifact: ArtifactRef
+    notifications: MonitorNotifications
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorNotificationsArtifactReader:
+    document_repository: DocumentRepository
+    artifact_store: ArtifactStore
+
+    def load_latest(self, *, monitor_id: str) -> PersistedMonitorNotificationsArtifact:
+        document_id = f"{monitor_id}-notifications"
+        latest_document = self.document_repository.get_latest(document_id)
+        if latest_document is None:
+            raise KeyError(f"Unknown document_id: {document_id}")
+
+        loaded_artifact = self.artifact_store.load(
+            document_id=latest_document.document_id,
+            version=latest_document.version,
+            artifact_name="monitor_notifications.json",
+            content_type="application/json",
+        )
+        return PersistedMonitorNotificationsArtifact(
+            document=latest_document,
+            artifact=loaded_artifact.artifact,
+            notifications=_deserialize_monitor_notifications(loaded_artifact.data),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class MonitorExecutionResult[T]:
     monitor: MonitorConfig
     execution: RunExecutionResult[T]
@@ -224,6 +259,7 @@ class MonitorExecutionService:
     run_service: RunService
     run_id_factory: Callable[[str], str]
     plugin_registry: PluginRegistry | None = None
+    source_fetch_context_provider: Callable[[MonitorConfig], SourceFetchContext | None] | None = None
 
     def execute_monitor(
         self,
@@ -544,7 +580,16 @@ class MonitorExecutionService:
             )
 
         plugin = self.plugin_registry.resolve_source_plugin(monitor.source.plugin)
-        payload = plugin.fetch(monitor=monitor)
+        fetch_context = (
+            self.source_fetch_context_provider(monitor)
+            if self.source_fetch_context_provider is not None
+            else None
+        )
+        payload = _invoke_source_plugin_fetch(
+            plugin=plugin,
+            monitor=monitor,
+            fetch_context=fetch_context,
+        )
         return MonitorSourceData(
             monitor_id=monitor.id,
             source_plugin=monitor.source.plugin,
@@ -723,7 +768,10 @@ class MonitorExecutionService:
             version=document.version,
             artifact_name="monitor_source_data.json",
             content_type="application/json",
-            data=json.dumps(asdict(source_data), separators=(",", ":")).encode("utf-8"),
+            data=json.dumps(
+                _serialize_monitor_source_data(source_data),
+                separators=(",", ":"),
+            ).encode("utf-8"),
         )
         return PersistedMonitorSourceArtifact(
             document=document,
@@ -1073,10 +1121,51 @@ def _deserialize_monitor_source_data(payload: bytes) -> MonitorSourceData:
             MonitorSourceRecord(
                 source_id=entry["source_id"],
                 content=entry["content"],
+                document_identity=entry.get("document_identity"),
+                title=entry.get("title"),
             )
             for entry in raw["records"]
         ),
     )
+
+
+def _deserialize_monitor_notifications(payload: bytes) -> MonitorNotifications:
+    raw = json.loads(payload)
+    return MonitorNotifications(
+        monitor_id=raw["monitor_id"],
+        deliveries=tuple(
+            MonitorNotificationDelivery(
+                profile_name=entry["profile_name"],
+                renderer=entry["renderer"],
+                service_name=entry["service_name"],
+                notifier_plugin=entry["notifier_plugin"],
+                payload=entry["payload"],
+            )
+            for entry in raw["deliveries"]
+        ),
+    )
+
+
+def _serialize_monitor_source_data(source_data: MonitorSourceData) -> dict[str, object]:
+    return {
+        "monitor_id": source_data.monitor_id,
+        "source_plugin": source_data.source_plugin,
+        "records": [
+            _serialize_monitor_source_record(record) for record in source_data.records
+        ],
+    }
+
+
+def _serialize_monitor_source_record(record: MonitorSourceRecord) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source_id": record.source_id,
+        "content": record.content,
+    }
+    if record.document_identity is not None:
+        payload["document_identity"] = record.document_identity
+    if record.title is not None:
+        payload["title"] = record.title
+    return payload
 
 
 def _normalize_monitor_source_record(payload: object) -> MonitorSourceRecord:
@@ -1085,9 +1174,41 @@ def _normalize_monitor_source_record(payload: object) -> MonitorSourceRecord:
 
     source_id = payload.get("source_id")
     content = payload.get("content")
+    document_identity = payload.get("document_identity")
+    title = payload.get("title")
     if not isinstance(source_id, str) or not source_id.strip():
         raise ValueError("Monitor source payload entries must define a non-blank source_id")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("Monitor source payload entries must define non-blank content")
+    if document_identity is not None and (
+        not isinstance(document_identity, str) or not document_identity.strip()
+    ):
+        raise ValueError(
+            "Monitor source payload document_identity must be a non-blank string when provided"
+        )
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        raise ValueError(
+            "Monitor source payload title must be a non-blank string when provided"
+        )
 
-    return MonitorSourceRecord(source_id=source_id.strip(), content=content.strip())
+    return MonitorSourceRecord(
+        source_id=source_id.strip(),
+        content=content.strip(),
+        document_identity=document_identity.strip() if isinstance(document_identity, str) else None,
+        title=title.strip() if isinstance(title, str) else None,
+    )
+
+
+def _invoke_source_plugin_fetch(
+    *,
+    plugin: object,
+    monitor: MonitorConfig,
+    fetch_context: SourceFetchContext | None,
+) -> object:
+    fetch = getattr(plugin, "fetch")
+    parameters = inspect.signature(fetch).parameters
+    if "fetch_context" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    ):
+        return fetch(monitor=monitor, fetch_context=fetch_context)
+    return fetch(monitor=monitor)

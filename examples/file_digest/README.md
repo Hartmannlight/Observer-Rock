@@ -7,6 +7,10 @@ This example runs one complete local Observer Rock slice:
 - render a digest
 - write the notification payload to `output/digest.txt`
 
+If you want to see budgeted recent-document rechecks in action, use
+`examples/indexed_file_watch` instead. That example separates discovery from
+document fetches and uses the new `change_tracking` window.
+
 ## Run It
 
 From the repository root:
@@ -49,6 +53,12 @@ Run one monitor directly:
 python -m observer_rock run-monitor local-file-digest --workspace examples/file_digest
 ```
 
+Inspect the stored history for one indexed document:
+
+```powershell
+python -m observer_rock document-history --workspace examples/file_digest --document local-file-digest:meeting-2026-03-14 --profile digest_v1
+```
+
 Expected success output:
 
 ```text
@@ -79,6 +89,23 @@ Scheduler summary tick=2026-03-14T12:05:00+00:00 configured=1 due=1 completed=1
 - `services.yml`: output and model services
 - `analysis_profiles.yml`: reusable analysis profile definitions
 - `monitors.yml`: monitor schedule, source, analyses, and outputs
+
+## Budgeted Rechecks
+
+For real remote sources, a monitor can limit how aggressively it rechecks older
+documents for changes:
+
+```yaml
+change_tracking:
+  recheck_recent_documents: 20
+  recheck_budget_per_run: 2
+  recheck_every_n_runs: 6
+```
+
+This means Observer Rock keeps only the latest `20` known documents in the
+recheck window, schedules at most `2` of them per recheck pass, and only does
+that pass every `6`th run. The goal is to keep change detection incremental and
+fair-use-friendly instead of reloading whole histories on every schedule tick.
 
 The example is intentionally local-only:
 

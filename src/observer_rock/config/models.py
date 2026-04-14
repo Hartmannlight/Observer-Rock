@@ -74,6 +74,14 @@ class MonitorOutputConfig(BaseModel):
     service: str = Field(min_length=1)
 
 
+class MonitorChangeTrackingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recheck_recent_documents: int = Field(default=0, ge=0)
+    recheck_budget_per_run: int = Field(default=0, ge=0)
+    recheck_every_n_runs: int = Field(default=1, ge=1)
+
+
 class MonitorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -82,6 +90,7 @@ class MonitorConfig(BaseModel):
     source: MonitorSourceConfig
     analyses: list[MonitorAnalysisConfig] | None = None
     outputs: list[MonitorOutputConfig] | None = None
+    change_tracking: MonitorChangeTrackingConfig | None = None
 
     @model_validator(mode="after")
     def validate_unique_analysis_profiles(self) -> "MonitorConfig":
@@ -109,6 +118,18 @@ class MonitorConfig(BaseModel):
                     f"{output.profile} and service {output.service}"
                 )
             seen_output_pairs.add(output_pair)
+        if self.change_tracking is not None:
+            tracking = self.change_tracking
+            if tracking.recheck_recent_documents == 0 and tracking.recheck_budget_per_run > 0:
+                raise ValueError(
+                    "change_tracking.recheck_budget_per_run requires "
+                    "change_tracking.recheck_recent_documents > 0"
+                )
+            if tracking.recheck_recent_documents > 0 and tracking.recheck_budget_per_run == 0:
+                raise ValueError(
+                    "change_tracking.recheck_recent_documents requires "
+                    "change_tracking.recheck_budget_per_run > 0"
+                )
         return self
 
 

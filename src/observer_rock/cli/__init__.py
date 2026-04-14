@@ -7,11 +7,17 @@ from pathlib import Path
 
 from observer_rock.application.monitoring import MonitorExecutionStageError, PersistedMonitorArtifact
 from observer_rock.cli.runtime import (
+    DocumentHistoryCommandResult,
+    InspectArtifactsCommandResult,
     ListMonitorsCommandEntry,
+    QueryDocumentsCommandResult,
     ValidateWorkspaceAnalysisProfileEntry,
     ValidateWorkspaceMonitorEntry,
     ValidateWorkspaceServiceEntry,
+    document_history_command,
+    inspect_artifacts_command,
     list_monitors_command,
+    query_documents_command,
     run_monitor_command,
     run_scheduler_command,
     validate_workspace_command,
@@ -71,6 +77,49 @@ def main(
         default=None,
         help="Optional ISO timestamp to evaluate schedules against.",
     )
+    inspect_artifacts_parser = subparsers.add_parser("inspect-artifacts")
+    inspect_artifacts_parser.add_argument("monitor_id")
+    inspect_artifacts_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+    )
+    query_documents_parser = subparsers.add_parser("query-documents")
+    query_documents_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+    )
+    query_documents_parser.add_argument(
+        "--profile",
+        required=True,
+    )
+    query_documents_parser.add_argument(
+        "--contains",
+        required=True,
+    )
+    query_documents_parser.add_argument(
+        "--monitor",
+        default=None,
+    )
+    query_documents_parser.add_argument(
+        "--all-versions",
+        action="store_true",
+    )
+    document_history_parser = subparsers.add_parser("document-history")
+    document_history_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+    )
+    document_history_parser.add_argument(
+        "--document",
+        required=True,
+    )
+    document_history_parser.add_argument(
+        "--profile",
+        required=True,
+    )
     validate_workspace_parser = subparsers.add_parser("validate-workspace")
     validate_workspace_parser.add_argument(
         "--workspace",
@@ -126,6 +175,8 @@ def main(
                 f"due={scheduler_result.due_monitor_count} "
                 f"skipped={scheduler_result.skipped_monitor_count}"
             )
+            for evaluation in scheduler_result.schedule_evaluations:
+                print(_format_scheduler_evaluation_line(evaluation))
             if not scheduler_result.monitor_results:
                 print(
                     "No monitors due at "
@@ -184,6 +235,34 @@ def main(
             )
             for monitor in list_result.monitors:
                 print(_format_list_monitors_line(monitor))
+            return 0
+        elif args.command == "inspect-artifacts":
+            inspection_result = inspect_artifacts_command(
+                workspace_root=args.workspace,
+                monitor_id=args.monitor_id,
+            )
+            for line in _format_inspect_artifacts_lines(inspection_result):
+                print(line)
+            return 1 if any(stage.status == "BROKEN" for stage in inspection_result.stages) else 0
+        elif args.command == "query-documents":
+            query_result = query_documents_command(
+                workspace_root=args.workspace,
+                profile_name=args.profile,
+                contains_text=args.contains,
+                monitor_id=args.monitor,
+                latest_only=not args.all_versions,
+            )
+            for line in _format_query_documents_lines(query_result):
+                print(line)
+            return 0
+        elif args.command == "document-history":
+            history_result = document_history_command(
+                workspace_root=args.workspace,
+                document_id=args.document,
+                profile_name=args.profile,
+            )
+            for line in _format_document_history_lines(history_result):
+                print(line)
             return 0
         elif args.command == "validate-workspace":
             validation_result = validate_workspace_command(
@@ -452,3 +531,110 @@ def _format_validate_workspace_monitor_line(monitor: ValidateWorkspaceMonitorEnt
         f"analyses={analyses} "
         f"outputs={outputs}"
     )
+
+
+def _format_inspect_artifacts_lines(result: InspectArtifactsCommandResult) -> list[str]:
+    lines = [
+        (
+            "Artifact inspection "
+            f"monitor={result.monitor_id} "
+            f"workspace={result.workspace_root} "
+            f"state_root={result.state_root}"
+        )
+    ]
+    for stage in result.stages:
+        if stage.status == "AVAILABLE":
+            lines.append(
+                f"{stage.stage} status=AVAILABLE "
+                f"document={stage.document_id}@v{stage.version} "
+                f"artifact={stage.artifact_path} "
+                f"content_type={stage.content_type} "
+                f"size_bytes={stage.size_bytes}"
+            )
+            lines.append(f"{stage.stage} payload={stage.payload}")
+            continue
+        if stage.status == "BROKEN":
+            lines.append(
+                f"{stage.stage} status=BROKEN "
+                f"document={stage.document_id}@v{stage.version} "
+                f"reason={stage.detail}"
+            )
+            continue
+        lines.append(f"{stage.stage} status=MISSING reason={stage.detail}")
+    return lines
+
+
+def _format_scheduler_evaluation_line(evaluation) -> str:
+    status = "DUE" if evaluation.due else "SKIPPED"
+    suffix = "" if evaluation.due else " reason=not_due"
+    return (
+        f"scheduler monitor={evaluation.monitor_id} "
+        f"status={status} "
+        f"schedule='{evaluation.schedule}'"
+        f"{suffix}"
+    )
+
+
+def _format_query_documents_lines(result: QueryDocumentsCommandResult) -> list[str]:
+    scope = "latest" if result.latest_only else "all_versions"
+    header = f"Document query profile={result.profile_name} contains={result.contains_text}"
+    if result.monitor_id is not None:
+        header += f" monitor={result.monitor_id}"
+    header += f" scope={scope} matches={len(result.matches)}"
+    lines = [header]
+    for match in result.matches:
+        lines.append(
+            f"match monitor={match.monitor_id} "
+            f"identity={match.identity_key} "
+            f"source_id={match.source_id} "
+            f"document={match.document_id}@v{match.version} "
+            f"profile={match.profile_name}"
+        )
+        if match.title is not None:
+            lines.append(f"title={match.title}")
+        lines.append(f"excerpt={match.analysis_text}")
+    return lines
+
+
+def _format_document_history_lines(result: DocumentHistoryCommandResult) -> list[str]:
+    lines = [
+        (
+            "Document history "
+            f"document={result.document_id} "
+            f"profile={result.profile_name} "
+            f"versions={len(result.entries)}"
+        )
+    ]
+    if not result.entries:
+        return lines
+
+    for entry in result.entries:
+        lines.append(
+            f"version={entry.version} "
+            f"monitor={entry.monitor_id} "
+            f"identity={entry.identity_key} "
+            f"source_id={entry.source_id}"
+        )
+        if entry.title is not None:
+            lines.append(f"title={entry.title}")
+        lines.append(f"excerpt={entry.analysis_text}")
+
+    comparison = result.comparison
+    if comparison is None:
+        lines.append("comparison status=INITIAL version_count=1")
+        return lines
+
+    lines.append(
+        "comparison "
+        f"from=v{comparison.from_version} "
+        f"to=v{comparison.to_version} "
+        f"source_changed={str(comparison.source_changed).lower()} "
+        f"analysis_changed={str(comparison.analysis_changed).lower()}"
+    )
+    if comparison.source_diff:
+        for line in comparison.source_diff:
+            lines.append(f"source_diff={line}")
+    if comparison.analysis_diff:
+        for line in comparison.analysis_diff:
+            lines.append(f"analysis_diff={line}")
+    return lines

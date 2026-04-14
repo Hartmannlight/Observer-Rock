@@ -1,0 +1,6 @@
+services:
+  local_model:
+    plugin: noop_model
+  local_output:
+    plugin: file_notifier
+    path: output/digest.txt

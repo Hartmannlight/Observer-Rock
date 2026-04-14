@@ -16,6 +16,9 @@ Observer Rock has a working framework core:
   - `python -m observer_rock list-monitors`
   - `python -m observer_rock run-monitor <monitor-id>`
   - `python -m observer_rock run-scheduler`
+  - `python -m observer_rock inspect-artifacts <monitor-id>`
+  - `python -m observer_rock query-documents --profile <profile> --contains <text>`
+  - `python -m observer_rock document-history --document <document-id> --profile <profile>`
 - renderer and notifier plugin seams
 - built-in vertical-slice plugins:
   - `builtin_json_file`
@@ -35,8 +38,11 @@ Observer Rock has a working framework core:
 ## What Is Still Missing
 
 - richer renderer and notifier options beyond the first working path
-- artifact inspection helpers for persisted source, analysis, and notification outputs
-- production hardening around retries and artifact inspection
+- richer query semantics beyond the first profile/text lookup
+- broader document identity heuristics beyond explicit identity and title fallback
+- rule-driven decisions on top of stored document history and analyses
+- source-specific sparse revalidation plugins that actively use the new
+  change-tracking fetch context beyond the first built-in indexed-file source
 
 ## Hardening Progress
 
@@ -48,14 +54,40 @@ Runtime observability has started:
   notification paths
 - `run-scheduler` now emits scheduler start and summary lines alongside per-monitor
   lifecycle output
+- `run-scheduler` now shows which configured monitors were due or skipped for
+  the evaluated tick
 - analysis profiles now honor `retries` during monitor execution
 - notifier services now honor `retries` during delivery attempts
+- `inspect-artifacts` now exposes the latest persisted source, analysis, and
+  notification artifacts for one monitor and reports missing or broken stages
+- successful monitor runs now index source records as queryable documents with
+  content-version tracking
+- source records can now provide a stable `document_identity` separate from a
+  changing technical `source_id`
+- when explicit document identity is absent, indexing now falls back to `title`
+  before using the raw `source_id`
+- `query-documents` now returns the first archive-style retrieval path over
+  persisted analysis projections
+- `query-documents` now supports monitor-scoped lookup and latest-versus-history
+  retrieval modes
+- `query-documents` now renders readable excerpts instead of raw analysis JSON
+- `document-history` now exposes version history for one stored document and
+  compares the latest version against the previous one
+- monitors can now declare budgeted recent-document change tracking via:
+  - `recheck_recent_documents`
+  - `recheck_budget_per_run`
+  - `recheck_every_n_runs`
+- runtime now persists per-monitor change-tracking state and passes source
+  plugins an optional `fetch_context` with the current recheck plan
+- built-in `builtin_indexed_file` now uses that `fetch_context` by separating
+  cheap index discovery from selective document downloads
 
 ## Architectural Position
 
-The core framework now includes one complete vertical slice. The next work
-should stay delivery-oriented:
+The core framework now includes one complete vertical slice plus the first
+document-intelligence retrieval path and first document-history comparison path.
+The next work should stay delivery-oriented:
 
-1. finish D4 hardening around artifact inspection and scheduler ergonomics
-2. then decide whether D3 can be formally closed
-3. only then add broader abstractions if a second real integration needs them
+1. build change-aware decisions on top of the new sparse revalidation path
+2. then broaden source integrations beyond the first built-in indexed-file source
+3. only then broaden abstractions or integrations again

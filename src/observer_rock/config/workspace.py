@@ -113,11 +113,13 @@ def _resolve_relative_paths_in_monitors(
     resolved_monitors = []
     for monitor in monitors.monitors:
         source_config = dict(monitor.source.config)
-        configured_path = source_config.get("path")
-        if isinstance(configured_path, str):
+        for path_key in ("path", "index_path"):
+            configured_path = source_config.get(path_key)
+            if not isinstance(configured_path, str):
+                continue
             path = Path(configured_path)
             if not path.is_absolute():
-                source_config["path"] = str((workspace_root / path).resolve())
+                source_config[path_key] = str((workspace_root / path).resolve())
         resolved_monitors.append(
             monitor.model_copy(
                 update={"source": monitor.source.model_copy(update={"config": source_config})}

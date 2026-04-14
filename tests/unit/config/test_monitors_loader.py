@@ -255,3 +255,78 @@ monitors:
         load_monitors_config(config_path)
 
     assert "profile" in str(exc_info.value)
+
+
+def test_loads_monitor_with_change_tracking_configuration(tmp_path: Path) -> None:
+    from observer_rock.config.loader import load_monitors_config
+
+    config_path = write_monitors_config(
+        tmp_path,
+        """
+monitors:
+  - id: document-monitor
+    schedule: "*/30 * * * *"
+    source:
+      plugin: website
+    change_tracking:
+      recheck_recent_documents: 20
+      recheck_budget_per_run: 2
+      recheck_every_n_runs: 6
+""".strip(),
+    )
+
+    config = load_monitors_config(config_path)
+
+    monitor = config.monitors[0]
+    assert monitor.change_tracking is not None
+    assert monitor.change_tracking.recheck_recent_documents == 20
+    assert monitor.change_tracking.recheck_budget_per_run == 2
+    assert monitor.change_tracking.recheck_every_n_runs == 6
+
+
+def test_rejects_change_tracking_budget_without_recent_window(tmp_path: Path) -> None:
+    from observer_rock.config.loader import load_monitors_config
+    from observer_rock.config.models import ConfigValidationError
+
+    config_path = write_monitors_config(
+        tmp_path,
+        """
+monitors:
+  - id: document-monitor
+    schedule: "*/30 * * * *"
+    source:
+      plugin: website
+    change_tracking:
+      recheck_recent_documents: 0
+      recheck_budget_per_run: 2
+""".strip(),
+    )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_monitors_config(config_path)
+
+    assert "recheck_budget_per_run" in str(exc_info.value)
+
+
+def test_rejects_change_tracking_window_without_budget(tmp_path: Path) -> None:
+    from observer_rock.config.loader import load_monitors_config
+    from observer_rock.config.models import ConfigValidationError
+
+    config_path = write_monitors_config(
+        tmp_path,
+        """
+monitors:
+  - id: document-monitor
+    schedule: "*/30 * * * *"
+    source:
+      plugin: website
+    change_tracking:
+      recheck_recent_documents: 10
+      recheck_budget_per_run: 0
+""".strip(),
+    )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_monitors_config(config_path)
+
+    assert "recheck_recent_documents" in str(exc_info.value)
