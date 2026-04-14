@@ -41,7 +41,8 @@ def load_workspace_config(
         for profile_name, profile in analysis_profiles.analysis_profiles.items():
             if profile.model_service not in available_services:
                 raise ValueError(
-                    f"Analysis profile '{profile_name}' references missing service "
+                    f"Analysis profile '{profile_name}' in {analysis_profiles_path.name} "
+                    f"references missing service "
                     f"'{profile.model_service}'"
                 )
 

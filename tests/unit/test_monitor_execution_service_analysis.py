@@ -8,13 +8,21 @@ from observer_rock.application.testing import InMemoryRunRepository
 from observer_rock.config.models import AnalysisProfilesConfig, MonitorsConfig, ServicesConfig
 from observer_rock.config.workspace import WorkspaceConfig
 from observer_rock.plugins.registry import PluginRegistry
-from tests._helpers import _RecordingAnalysisPlugin, _sequence_now_provider
+from tests._helpers import (
+    _RecordingAnalysisPlugin,
+    _RecordingSourcePlugin,
+    _sequence_now_provider,
+)
 
 
 def test_monitor_execution_service_executes_analysis_plugins_for_a_monitor() -> None:
     plugin = _RecordingAnalysisPlugin(output={"summary": "ok"})
+    source_plugin = _RecordingSourcePlugin(
+        payload=[{"source_id": "item-001", "content": "first post"}]
+    )
     registry = PluginRegistry()
     registry.register_analysis_plugin("llm_extract", plugin)
+    registry.register_source_plugin("reddit", source_plugin)
     service = MonitorExecutionService(
         workspace=WorkspaceConfig(
             root=Path("C:/workspace"),

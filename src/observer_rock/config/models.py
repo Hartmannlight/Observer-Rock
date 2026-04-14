@@ -17,6 +17,7 @@ class ServiceConfig(BaseModel):
 class ServicesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    plugin_import_paths: list[str] = Field(default_factory=list)
     services: dict[str, ServiceConfig]
 
     @classmethod

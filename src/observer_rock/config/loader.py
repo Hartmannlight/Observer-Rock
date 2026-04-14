@@ -14,7 +14,10 @@ def load_services_config(
     path: Path,
     env: dict[str, str] | None = None,
 ) -> ServicesConfig:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(f"Invalid YAML in services config {path}: {exc}") from exc
     if payload is None:
         payload = {}
     if not isinstance(payload, dict):
@@ -24,7 +27,12 @@ def load_services_config(
 
 
 def load_analysis_profiles_config(path: Path) -> AnalysisProfilesConfig:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(
+            f"Invalid YAML in analysis profiles config {path}: {exc}"
+        ) from exc
     if payload is None:
         payload = {}
     if not isinstance(payload, dict):
@@ -35,7 +43,10 @@ def load_analysis_profiles_config(path: Path) -> AnalysisProfilesConfig:
 
 
 def load_monitors_config(path: Path) -> MonitorsConfig:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(f"Invalid YAML in monitors config {path}: {exc}") from exc
     if payload is None:
         payload = {}
     if not isinstance(payload, dict):

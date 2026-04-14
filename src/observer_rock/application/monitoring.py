@@ -1,5 +1,6 @@
 import json
 from dataclasses import asdict, dataclass
+from collections.abc import Mapping
 from typing import Callable, TypeVar
 
 from observer_rock.application.artifacts import ArtifactRef, ArtifactStore
@@ -47,6 +48,19 @@ class MonitorAnalysis:
 
 
 @dataclass(frozen=True, slots=True)
+class MonitorSourceRecord:
+    source_id: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorSourceData:
+    monitor_id: str
+    source_plugin: str
+    records: tuple[MonitorSourceRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MonitorDefinition:
     snapshot: MonitorSnapshot
     analysis_plan: MonitorAnalysisPlan
@@ -79,6 +93,19 @@ class PersistedMonitorAnalysisArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class PersistedMonitorSourceArtifact:
+    document: DocumentRecord
+    artifact: ArtifactRef
+    source: MonitorSourceData
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedMonitorSourceToAnalysisArtifacts:
+    source: PersistedMonitorArtifact
+    analysis: PersistedMonitorArtifact
+
+
+@dataclass(frozen=True, slots=True)
 class MonitorAnalysisArtifactReader:
     document_repository: DocumentRepository
     artifact_store: ArtifactStore
@@ -99,6 +126,30 @@ class MonitorAnalysisArtifactReader:
             document=latest_document,
             artifact=loaded_artifact.artifact,
             analysis=_deserialize_monitor_analysis(loaded_artifact.data),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorSourceArtifactReader:
+    document_repository: DocumentRepository
+    artifact_store: ArtifactStore
+
+    def load_latest(self, *, monitor_id: str) -> PersistedMonitorSourceArtifact:
+        document_id = f"{monitor_id}-source-data"
+        latest_document = self.document_repository.get_latest(document_id)
+        if latest_document is None:
+            raise KeyError(f"Unknown document_id: {document_id}")
+
+        loaded_artifact = self.artifact_store.load(
+            document_id=latest_document.document_id,
+            version=latest_document.version,
+            artifact_name="monitor_source_data.json",
+            content_type="application/json",
+        )
+        return PersistedMonitorSourceArtifact(
+            document=latest_document,
+            artifact=loaded_artifact.artifact,
+            source=_deserialize_monitor_source_data(loaded_artifact.data),
         )
 
 
@@ -174,6 +225,16 @@ class MonitorExecutionService:
         return self.execute_monitor(
             monitor_id=monitor_id,
             operation=self._build_monitor_analysis,
+        )
+
+    def execute_monitor_source(
+        self,
+        *,
+        monitor_id: str,
+    ) -> MonitorExecutionResult[MonitorSourceData]:
+        return self.execute_monitor(
+            monitor_id=monitor_id,
+            operation=self._build_monitor_source_data,
         )
 
     def execute_monitor_definition(
@@ -260,6 +321,59 @@ class MonitorExecutionService:
             ),
         )
 
+    def execute_monitor_analysis_artifact_from_latest_source_data(
+        self,
+        *,
+        monitor_id: str,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> MonitorExecutionResult[PersistedMonitorArtifact]:
+        source_reader = MonitorSourceArtifactReader(
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+        )
+        return self.execute_monitor(
+            monitor_id=monitor_id,
+            operation=lambda monitor: self._persist_monitor_analysis_artifact(
+                monitor=monitor,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+                source_data=source_reader.load_latest(monitor_id=monitor.id).source,
+            ),
+        )
+
+    def execute_monitor_source_artifact(
+        self,
+        *,
+        monitor_id: str,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> MonitorExecutionResult[PersistedMonitorArtifact]:
+        return self.execute_monitor(
+            monitor_id=monitor_id,
+            operation=lambda monitor: self._persist_monitor_source_artifact(
+                monitor=monitor,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+            ),
+        )
+
+    def execute_monitor_source_to_analysis_artifacts(
+        self,
+        *,
+        monitor_id: str,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> MonitorExecutionResult[PersistedMonitorSourceToAnalysisArtifacts]:
+        return self.execute_monitor(
+            monitor_id=monitor_id,
+            operation=lambda monitor: self._persist_monitor_source_to_analysis_artifacts(
+                monitor=monitor,
+                document_repository=document_repository,
+                artifact_store=artifact_store,
+            ),
+        )
+
     def execute_monitor_definition_artifact(
         self,
         *,
@@ -315,21 +429,44 @@ class MonitorExecutionService:
             analysis_plan=self._build_monitor_analysis_plan(monitor),
         )
 
-    def _build_monitor_analysis(self, monitor: MonitorConfig) -> MonitorAnalysis:
+    def _build_monitor_analysis(
+        self,
+        monitor: MonitorConfig,
+        *,
+        source_data: MonitorSourceData | None = None,
+    ) -> MonitorAnalysis:
         configured_profiles = (
             self.workspace.analysis_profiles.analysis_profiles
             if self.workspace.analysis_profiles is not None
             else {}
+        )
+        source_data = (
+            self._build_monitor_source_data(monitor) if source_data is None else source_data
         )
         outputs = tuple(
             self._build_monitor_analysis_output_entry(
                 monitor=monitor,
                 profile_name=analysis.profile,
                 profile=configured_profiles[analysis.profile],
+                source_data=source_data,
             )
             for analysis in (monitor.analyses or [])
         )
         return MonitorAnalysis(monitor_id=monitor.id, outputs=outputs)
+
+    def _build_monitor_source_data(self, monitor: MonitorConfig) -> MonitorSourceData:
+        if self.plugin_registry is None:
+            raise ValueError(
+                "MonitorExecutionService requires a plugin_registry for source execution"
+            )
+
+        plugin = self.plugin_registry.resolve_source_plugin(monitor.source.plugin)
+        payload = plugin.fetch(monitor=monitor)
+        return MonitorSourceData(
+            monitor_id=monitor.id,
+            source_plugin=monitor.source.plugin,
+            records=tuple(_normalize_monitor_source_record(entry) for entry in payload),
+        )
 
     def _build_monitor_execution_plan(self, monitor: MonitorConfig) -> MonitorExecutionPlan:
         definition = self._build_monitor_definition(monitor)
@@ -430,8 +567,9 @@ class MonitorExecutionService:
         monitor: MonitorConfig,
         document_repository: DocumentRepository,
         artifact_store: ArtifactStore,
+        source_data: MonitorSourceData | None = None,
     ) -> PersistedMonitorArtifact:
-        analysis = self._build_monitor_analysis(monitor)
+        analysis = self._build_monitor_analysis(monitor, source_data=source_data)
         document_id = f"{monitor.id}-analysis-output"
         latest_document = document_repository.get_latest(document_id)
         document = document_repository.save(
@@ -448,6 +586,78 @@ class MonitorExecutionService:
             data=json.dumps(asdict(analysis), separators=(",", ":")).encode("utf-8"),
         )
         return PersistedMonitorArtifact(document=document, artifact=artifact)
+
+    def _persist_monitor_source_artifact(
+        self,
+        *,
+        monitor: MonitorConfig,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> PersistedMonitorArtifact:
+        persisted = self._persist_monitor_source_data_artifact(
+            monitor=monitor,
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+        )
+        return PersistedMonitorArtifact(
+            document=persisted.document,
+            artifact=persisted.artifact,
+        )
+
+    def _persist_monitor_source_data_artifact(
+        self,
+        *,
+        monitor: MonitorConfig,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> PersistedMonitorSourceArtifact:
+        source_data = self._build_monitor_source_data(monitor)
+        document_id = f"{monitor.id}-source-data"
+        latest_document = document_repository.get_latest(document_id)
+        document = document_repository.save(
+            DocumentRecord(
+                document_id=document_id,
+                version=1 if latest_document is None else latest_document.version + 1,
+            )
+        )
+        artifact = artifact_store.save(
+            document_id=document.document_id,
+            version=document.version,
+            artifact_name="monitor_source_data.json",
+            content_type="application/json",
+            data=json.dumps(asdict(source_data), separators=(",", ":")).encode("utf-8"),
+        )
+        return PersistedMonitorSourceArtifact(
+            document=document,
+            artifact=artifact,
+            source=source_data,
+        )
+
+    def _persist_monitor_source_to_analysis_artifacts(
+        self,
+        *,
+        monitor: MonitorConfig,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> PersistedMonitorSourceToAnalysisArtifacts:
+        persisted_source = self._persist_monitor_source_data_artifact(
+            monitor=monitor,
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+        )
+        analysis_artifact = self._persist_monitor_analysis_artifact(
+            monitor=monitor,
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+            source_data=persisted_source.source,
+        )
+        return PersistedMonitorSourceToAnalysisArtifacts(
+            source=PersistedMonitorArtifact(
+                document=persisted_source.document,
+                artifact=persisted_source.artifact,
+            ),
+            analysis=analysis_artifact,
+        )
 
     def _persist_monitor_definition_artifact(
         self,
@@ -494,6 +704,7 @@ class MonitorExecutionService:
         monitor: MonitorConfig,
         profile_name: str,
         profile: AnalysisProfileConfig,
+        source_data: MonitorSourceData | None = None,
     ) -> MonitorAnalysisOutputEntry:
         if self.plugin_registry is None:
             raise ValueError(
@@ -508,6 +719,7 @@ class MonitorExecutionService:
                 monitor=monitor,
                 profile_name=profile_name,
                 profile=profile,
+                source_data=source_data,
             ),
         )
 
@@ -540,3 +752,32 @@ def _deserialize_monitor_analysis(payload: bytes) -> MonitorAnalysis:
             for entry in raw["outputs"]
         ),
     )
+
+
+def _deserialize_monitor_source_data(payload: bytes) -> MonitorSourceData:
+    raw = json.loads(payload)
+    return MonitorSourceData(
+        monitor_id=raw["monitor_id"],
+        source_plugin=raw["source_plugin"],
+        records=tuple(
+            MonitorSourceRecord(
+                source_id=entry["source_id"],
+                content=entry["content"],
+            )
+            for entry in raw["records"]
+        ),
+    )
+
+
+def _normalize_monitor_source_record(payload: object) -> MonitorSourceRecord:
+    if not isinstance(payload, Mapping):
+        raise TypeError("Monitor source payload entries must be mappings")
+
+    source_id = payload.get("source_id")
+    content = payload.get("content")
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError("Monitor source payload entries must define a non-blank source_id")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Monitor source payload entries must define non-blank content")
+
+    return MonitorSourceRecord(source_id=source_id.strip(), content=content.strip())
