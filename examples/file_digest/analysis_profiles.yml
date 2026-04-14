@@ -1,0 +1,4 @@
+analysis_profiles:
+  digest_v1:
+    plugin: builtin_summary
+    model_service: local_model

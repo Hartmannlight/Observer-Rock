@@ -9,13 +9,13 @@ This backlog now tracks delivery packages instead of micro-invariants.
   - Scope: temp artifact hygiene, slimmer handover docs, ignore runtime state, remove obvious unused artifacts
 
 - `D2` Stabilize one operator-facing vertical slice
-  - Status: next
+  - Status: done
   - Scope: one example source plugin, one renderer, one notifier, one example workspace, one end-to-end test
 
 ## Next
 
 - `D3` Improve operator usability
-  - Status: queued
+  - Status: next
   - Scope: better CLI output, clearer example config, setup notes, failure-path docs
 
 - `D4` Production-hardening for the first slice

@@ -39,6 +39,27 @@ class _RecordingSourcePlugin:
         return self.payload
 
 
+class _RecordingRendererPlugin:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def render(self, *, monitor, output, analysis_output, source_data=None) -> str:
+        self.calls.append((monitor.id, output.profile))
+        return (
+            f"{monitor.id}|{analysis_output.profile_name}|"
+            f"{analysis_output.output['record_count']}"
+        )
+
+
+class _RecordingNotifierPlugin:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def notify(self, *, monitor, service_name, service, payload: str) -> object:
+        self.calls.append((monitor.id, service_name, payload))
+        return {"service_name": service_name, "payload": payload}
+
+
 def _sequence_now_provider(*values: datetime):
     iterator = iter(values)
 

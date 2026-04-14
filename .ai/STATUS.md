@@ -13,27 +13,32 @@ Observer Rock has a working framework core:
 - operator-facing CLI commands:
   - `python -m observer_rock run-monitor <monitor-id>`
   - `python -m observer_rock run-scheduler`
+- renderer and notifier plugin seams
+- built-in vertical-slice plugins:
+  - `builtin_json_file`
+  - `builtin_summary`
+  - `builtin_digest`
+  - `file_notifier`
+- runnable example workspace under `examples/file_digest`
 
 ## Verified State
 
 - unit and component coverage around config loading, plugin loading, monitor
   execution, CLI behavior, and persistence
-- previously reported full-suite state: `145 passed`
+- end-to-end coverage for the example file-digest workspace
 - temporary test directories now clean themselves up through `tests/conftest.py`
 
 ## What Is Still Missing
 
-- one real example source-to-notification operator slice
-- renderer support
-- notifier support
-- one example workspace that a user can run without reading the internals first
-- one stable e2e test for the full happy path
+- richer renderer and notifier options beyond the first working path
+- better operator-facing setup and troubleshooting docs
+- production hardening around logging and retries
 
 ## Architectural Position
 
-The core framework is good enough to stop expanding abstractions for a while.
-The next work should be delivery-oriented:
+The core framework now includes one complete vertical slice. The next work
+should stay delivery-oriented:
 
-1. finish one real vertical slice
-2. prove it with e2e coverage
+1. improve operator usability around the first slice
+2. harden the runtime around logging and retries
 3. only then add broader abstractions if a second real integration needs them

@@ -18,7 +18,7 @@ Done in the current tree:
 
 ### Package 2: First Vertical Operator Slice
 
-Build one runnable happy path with visible value:
+Done in the current tree:
 
 - one example source plugin
 - one renderer
@@ -26,11 +26,12 @@ Build one runnable happy path with visible value:
 - one example workspace
 - one e2e test that exercises the full path
 
-The goal is not generality. The goal is a working product slice.
+The project now has one working product slice. The goal remains progress by
+coherent delivery packages, not by framework-only micro-steps.
 
 ### Package 3: Operator Usability
 
-After the first slice works:
+Next:
 
 - tighten CLI output
 - add example setup docs

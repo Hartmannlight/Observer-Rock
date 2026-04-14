@@ -25,11 +25,15 @@ def test_module_entrypoint_uses_cwd_as_default_workspace_and_invokes_run_monitor
         monitor_id: str,
         source_plugins: object | None = None,
         analysis_plugins: object | None = None,
+        renderer_plugins: object | None = None,
+        notifier_plugins: object | None = None,
     ) -> SimpleNamespace:
         recorded["workspace_root"] = workspace_root
         recorded["monitor_id"] = monitor_id
         recorded["source_plugins"] = source_plugins
         recorded["analysis_plugins"] = analysis_plugins
+        recorded["renderer_plugins"] = renderer_plugins
+        recorded["notifier_plugins"] = notifier_plugins
         return SimpleNamespace(
             state_root=workspace_root / ".observer_rock",
             execution=SimpleNamespace(
@@ -53,6 +57,8 @@ def test_module_entrypoint_uses_cwd_as_default_workspace_and_invokes_run_monitor
         "monitor_id": "monitor-123",
         "source_plugins": None,
         "analysis_plugins": None,
+        "renderer_plugins": None,
+        "notifier_plugins": None,
     }
     assert captured.out == f"monitor-123 COMPLETED {workspace / '.observer_rock' / 'artifacts'}\n"
     assert captured.err == ""

@@ -1,0 +1,13 @@
+monitors:
+  - id: local-file-digest
+    schedule: "*/5 * * * *"
+    source:
+      plugin: builtin_json_file
+      config:
+        path: input/feed.json
+    analyses:
+      - profile: digest_v1
+    outputs:
+      - profile: digest_v1
+        renderer: builtin_digest
+        service: local_output

@@ -13,6 +13,8 @@ def main(
     *,
     source_plugins: Mapping[str, object] | None = None,
     analysis_plugins: Mapping[str, object] | None = None,
+    renderer_plugins: Mapping[str, object] | None = None,
+    notifier_plugins: Mapping[str, object] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="observer-rock")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -49,12 +51,16 @@ def main(
                 monitor_id=args.monitor_id,
                 source_plugins=source_plugins,
                 analysis_plugins=analysis_plugins,
+                renderer_plugins=renderer_plugins,
+                notifier_plugins=notifier_plugins,
             )
         elif args.command == "run-scheduler":
             scheduler_result = run_scheduler_command(
                 workspace_root=args.workspace,
                 source_plugins=source_plugins,
                 analysis_plugins=analysis_plugins,
+                renderer_plugins=renderer_plugins,
+                notifier_plugins=notifier_plugins,
                 tick=args.tick,
             )
             if scheduler_result.configured_monitor_count == 0:

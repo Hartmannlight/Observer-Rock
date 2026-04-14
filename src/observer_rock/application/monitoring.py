@@ -6,7 +6,12 @@ from typing import Callable, TypeVar
 from observer_rock.application.artifacts import ArtifactRef, ArtifactStore
 from observer_rock.application.documents import DocumentRecord, DocumentRepository
 from observer_rock.application.services import RunExecutionResult, RunService
-from observer_rock.config.models import AnalysisProfileConfig, MonitorConfig, ServiceConfig
+from observer_rock.config.models import (
+    AnalysisProfileConfig,
+    MonitorConfig,
+    MonitorOutputConfig,
+    ServiceConfig,
+)
 from observer_rock.config.workspace import WorkspaceConfig
 from observer_rock.plugins.registry import PluginRegistry
 
@@ -45,6 +50,21 @@ class MonitorAnalysisOutputEntry:
 class MonitorAnalysis:
     monitor_id: str
     outputs: tuple[MonitorAnalysisOutputEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorNotificationDelivery:
+    profile_name: str
+    renderer: str
+    service_name: str
+    notifier_plugin: str
+    payload: str
+
+
+@dataclass(frozen=True, slots=True)
+class MonitorNotifications:
+    monitor_id: str
+    deliveries: tuple[MonitorNotificationDelivery, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +123,7 @@ class PersistedMonitorSourceArtifact:
 class PersistedMonitorSourceToAnalysisArtifacts:
     source: PersistedMonitorArtifact
     analysis: PersistedMonitorArtifact
+    notifications: PersistedMonitorArtifact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +475,34 @@ class MonitorExecutionService:
         )
         return MonitorAnalysis(monitor_id=monitor.id, outputs=outputs)
 
+    def _build_monitor_notifications(
+        self,
+        monitor: MonitorConfig,
+        *,
+        analysis: MonitorAnalysis,
+        source_data: MonitorSourceData | None = None,
+    ) -> MonitorNotifications | None:
+        if not monitor.outputs:
+            return None
+        if self.plugin_registry is None:
+            raise ValueError(
+                "MonitorExecutionService requires a plugin_registry for output delivery"
+            )
+
+        analysis_outputs = {
+            output_entry.profile_name: output_entry for output_entry in analysis.outputs
+        }
+        deliveries = tuple(
+            self._build_monitor_notification_delivery(
+                monitor=monitor,
+                output=output,
+                analysis_output=analysis_outputs[output.profile],
+                source_data=source_data,
+            )
+            for output in monitor.outputs
+        )
+        return MonitorNotifications(monitor_id=monitor.id, deliveries=deliveries)
+
     def _build_monitor_source_data(self, monitor: MonitorConfig) -> MonitorSourceData:
         if self.plugin_registry is None:
             raise ValueError(
@@ -570,6 +619,21 @@ class MonitorExecutionService:
         source_data: MonitorSourceData | None = None,
     ) -> PersistedMonitorArtifact:
         analysis = self._build_monitor_analysis(monitor, source_data=source_data)
+        return self._persist_built_monitor_analysis_artifact(
+            monitor=monitor,
+            analysis=analysis,
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+        )
+
+    def _persist_built_monitor_analysis_artifact(
+        self,
+        *,
+        monitor: MonitorConfig,
+        analysis: MonitorAnalysis,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+    ) -> PersistedMonitorArtifact:
         document_id = f"{monitor.id}-analysis-output"
         latest_document = document_repository.get_latest(document_id)
         document = document_repository.save(
@@ -645,10 +709,18 @@ class MonitorExecutionService:
             document_repository=document_repository,
             artifact_store=artifact_store,
         )
-        analysis_artifact = self._persist_monitor_analysis_artifact(
+        built_analysis = self._build_monitor_analysis(monitor, source_data=persisted_source.source)
+        analysis_artifact = self._persist_built_monitor_analysis_artifact(
+            monitor=monitor,
+            analysis=built_analysis,
+            document_repository=document_repository,
+            artifact_store=artifact_store,
+        )
+        persisted_notifications = self._persist_monitor_notifications_artifact(
             monitor=monitor,
             document_repository=document_repository,
             artifact_store=artifact_store,
+            analysis=built_analysis,
             source_data=persisted_source.source,
         )
         return PersistedMonitorSourceToAnalysisArtifacts(
@@ -657,6 +729,7 @@ class MonitorExecutionService:
                 artifact=persisted_source.artifact,
             ),
             analysis=analysis_artifact,
+            notifications=persisted_notifications,
         )
 
     def _persist_monitor_definition_artifact(
@@ -722,6 +795,76 @@ class MonitorExecutionService:
                 source_data=source_data,
             ),
         )
+
+    def _build_monitor_notification_delivery(
+        self,
+        *,
+        monitor: MonitorConfig,
+        output: MonitorOutputConfig,
+        analysis_output: MonitorAnalysisOutputEntry,
+        source_data: MonitorSourceData | None = None,
+    ) -> MonitorNotificationDelivery:
+        if self.plugin_registry is None:
+            raise ValueError(
+                "MonitorExecutionService requires a plugin_registry for output delivery"
+            )
+
+        service = self.workspace.services.services[output.service]
+        renderer = self.plugin_registry.resolve_renderer_plugin(output.renderer)
+        payload = renderer.render(
+            monitor=monitor,
+            output=output,
+            analysis_output=analysis_output,
+            source_data=source_data,
+        )
+        notifier = self.plugin_registry.resolve_notifier_plugin(service.plugin)
+        notifier.notify(
+            monitor=monitor,
+            service_name=output.service,
+            service=service,
+            payload=payload,
+        )
+        return MonitorNotificationDelivery(
+            profile_name=output.profile,
+            renderer=output.renderer,
+            service_name=output.service,
+            notifier_plugin=service.plugin,
+            payload=payload,
+        )
+
+    def _persist_monitor_notifications_artifact(
+        self,
+        *,
+        monitor: MonitorConfig,
+        document_repository: DocumentRepository,
+        artifact_store: ArtifactStore,
+        analysis: MonitorAnalysis,
+        source_data: MonitorSourceData | None = None,
+    ) -> PersistedMonitorArtifact | None:
+        notifications = self._build_monitor_notifications(
+            monitor,
+            analysis=analysis,
+            source_data=source_data,
+        )
+        if notifications is None:
+            return None
+
+        document_id = f"{monitor.id}-notifications"
+        latest_document = document_repository.get_latest(document_id)
+        document = document_repository.save(
+            DocumentRecord(
+                document_id=document_id,
+                version=1 if latest_document is None else latest_document.version + 1,
+            )
+        )
+        artifact = artifact_store.save(
+            document_id=document.document_id,
+            version=document.version,
+            artifact_name="monitor_notifications.json",
+            content_type="application/json",
+            data=json.dumps(asdict(notifications), separators=(",", ":")).encode("utf-8"),
+        )
+        return PersistedMonitorArtifact(document=document, artifact=artifact)
 
     def _build_monitor_execution_plan_binding(
         self,

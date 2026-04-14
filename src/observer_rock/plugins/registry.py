@@ -1,7 +1,9 @@
-from importlib import import_module
+from importlib import import_module, invalidate_caches
 from typing import Protocol
 
 from observer_rock.plugins.analysis import AnalysisPlugin
+from observer_rock.plugins.notifier import NotifierPlugin
+from observer_rock.plugins.rendering import RendererPlugin
 from observer_rock.plugins.source import SourcePlugin
 
 BUILTIN_PLUGIN_IMPORT_PATHS = ("observer_rock.plugins.builtin",)
@@ -14,9 +16,12 @@ class PluginRegistrar(Protocol):
 class PluginRegistry:
     def __init__(self) -> None:
         self._analysis_plugins: dict[str, AnalysisPlugin] = {}
+        self._notifier_plugins: dict[str, NotifierPlugin] = {}
+        self._renderer_plugins: dict[str, RendererPlugin] = {}
         self._source_plugins: dict[str, SourcePlugin] = {}
 
     def load_plugins(self, plugin_import_paths: list[str]) -> None:
+        invalidate_caches()
         for plugin_import_path in [*BUILTIN_PLUGIN_IMPORT_PATHS, *plugin_import_paths]:
             try:
                 plugin_module = import_module(plugin_import_path)
@@ -60,3 +65,21 @@ class PluginRegistry:
             return self._source_plugins[plugin_name]
 
         raise KeyError(f"Unknown source plugin: {plugin_name}")
+
+    def register_renderer_plugin(self, plugin_name: str, plugin: RendererPlugin) -> None:
+        self._renderer_plugins[plugin_name] = plugin
+
+    def resolve_renderer_plugin(self, plugin_name: str) -> RendererPlugin:
+        if plugin_name in self._renderer_plugins:
+            return self._renderer_plugins[plugin_name]
+
+        raise KeyError(f"Unknown renderer plugin: {plugin_name}")
+
+    def register_notifier_plugin(self, plugin_name: str, plugin: NotifierPlugin) -> None:
+        self._notifier_plugins[plugin_name] = plugin
+
+    def resolve_notifier_plugin(self, plugin_name: str) -> NotifierPlugin:
+        if plugin_name in self._notifier_plugins:
+            return self._notifier_plugins[plugin_name]
+
+        raise KeyError(f"Unknown notifier plugin: {plugin_name}")

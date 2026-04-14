@@ -53,6 +53,7 @@ services: {}
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
 
     workspace = load_workspace_config(tmp_path)
 
@@ -100,6 +101,8 @@ def register_plugins(registry):
     registry.load_plugins(["external_observer_plugin"])
 
     registry.resolve_source_plugin("builtin_echo")
+    registry.resolve_renderer_plugin("builtin_digest")
+    registry.resolve_notifier_plugin("file_notifier")
     registry.resolve_source_plugin("external_source")
 
 

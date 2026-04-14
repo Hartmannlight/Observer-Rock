@@ -12,6 +12,7 @@ class ServiceConfig(BaseModel):
     token_env: str | None = Field(default=None, min_length=1)
     token: str | None = None
     channel_id: str | None = Field(default=None, min_length=1)
+    path: str | None = Field(default=None, min_length=1)
 
 
 class ServicesConfig(BaseModel):
@@ -55,12 +56,21 @@ class MonitorSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: str = Field(min_length=1)
+    config: dict[str, object] = Field(default_factory=dict)
 
 
 class MonitorAnalysisConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: str = Field(min_length=1)
+
+
+class MonitorOutputConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile: str = Field(min_length=1)
+    renderer: str = Field(min_length=1)
+    service: str = Field(min_length=1)
 
 
 class MonitorConfig(BaseModel):
@@ -70,17 +80,34 @@ class MonitorConfig(BaseModel):
     schedule: str = Field(min_length=1)
     source: MonitorSourceConfig
     analyses: list[MonitorAnalysisConfig] | None = None
+    outputs: list[MonitorOutputConfig] | None = None
 
     @model_validator(mode="after")
     def validate_unique_analysis_profiles(self) -> "MonitorConfig":
         if self.analyses is None:
-            return self
+            analyses = []
+        else:
+            analyses = self.analyses
 
         seen_profiles: set[str] = set()
-        for analysis in self.analyses:
+        for analysis in analyses:
             if analysis.profile in seen_profiles:
                 raise ValueError(f"duplicate analysis profile: {analysis.profile}")
             seen_profiles.add(analysis.profile)
+
+        seen_output_pairs: set[tuple[str, str]] = set()
+        for output in self.outputs or []:
+            if output.profile not in seen_profiles:
+                raise ValueError(
+                    f"output references unknown monitor analysis profile: {output.profile}"
+                )
+            output_pair = (output.profile, output.service)
+            if output_pair in seen_output_pairs:
+                raise ValueError(
+                    "duplicate output target for analysis profile "
+                    f"{output.profile} and service {output.service}"
+                )
+            seen_output_pairs.add(output_pair)
         return self
 
 

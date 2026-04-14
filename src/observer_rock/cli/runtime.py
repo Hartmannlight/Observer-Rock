@@ -39,6 +39,8 @@ def run_monitor_command(
     monitor_id: str,
     source_plugins: Mapping[str, object] | None = None,
     analysis_plugins: Mapping[str, object] | None = None,
+    renderer_plugins: Mapping[str, object] | None = None,
+    notifier_plugins: Mapping[str, object] | None = None,
 ) -> RunMonitorCommandResult:
     workspace_config = load_workspace_config(workspace_root)
     state_root = workspace_root / ".observer_rock"
@@ -56,6 +58,10 @@ def run_monitor_command(
         registry.register_source_plugin(plugin_name, plugin)
     for plugin_name, plugin in (analysis_plugins or {}).items():
         registry.register_analysis_plugin(plugin_name, plugin)
+    for plugin_name, plugin in (renderer_plugins or {}).items():
+        registry.register_renderer_plugin(plugin_name, plugin)
+    for plugin_name, plugin in (notifier_plugins or {}).items():
+        registry.register_notifier_plugin(plugin_name, plugin)
 
     service = MonitorExecutionService(
         workspace=workspace_config,
@@ -76,6 +82,8 @@ def run_scheduler_command(
     workspace_root: Path,
     source_plugins: Mapping[str, object] | None = None,
     analysis_plugins: Mapping[str, object] | None = None,
+    renderer_plugins: Mapping[str, object] | None = None,
+    notifier_plugins: Mapping[str, object] | None = None,
     tick: datetime | None = None,
 ) -> RunSchedulerCommandResult:
     workspace_config = load_workspace_config(workspace_root)
@@ -87,6 +95,8 @@ def run_scheduler_command(
             monitor_id=monitor.id,
             source_plugins=source_plugins,
             analysis_plugins=analysis_plugins,
+            renderer_plugins=renderer_plugins,
+            notifier_plugins=notifier_plugins,
         )
         for monitor in configured_monitors
         if _is_schedule_due(monitor.schedule, effective_tick)
